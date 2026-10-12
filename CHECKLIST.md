@@ -9,14 +9,14 @@
 ## День 1: Инфраструктура и датасет
 
 ### Задачи (8/8)
-- [ ] 1.1. Создать Git репозиторий
-- [ ] 1.2. Создать .gitignore
-- [ ] 1.3. Создать структуру папок (backend, frontend)
-- [ ] 1.4. Написать скрипт `extract_all_references.py`
-- [ ] 1.5. Запустить обработку датасета (520 видео)
-- [ ] 1.6. Установить Backend зависимости (requirements.txt)
-- [ ] 1.7. Установить Frontend зависимости (npm)
-- [ ] 1.8. Запустить Docker Compose (PostgreSQL + Redis)
+- [x] 1.1. Создать Git репозиторий
+- [x] 1.2. Создать .gitignore
+- [x] 1.3. Создать структуру папок (backend, frontend)
+- [x] 1.4. Написать скрипт `extract_all_references.py`
+- [ ] 1.5. Запустить обработку датасета (520 видео) — ⛔ ЗАБЛОКИРОВАНО: датасет нерабочий (WebP-превью вместо видео)
+- [x] 1.6. Установить Backend зависимости (requirements.txt)
+- [x] 1.7. Установить Frontend зависимости (npm)
+- [x] 1.8. Запустить Docker Compose (PostgreSQL + Redis)
 
 ### Результат
 ✅ Репозиторий создан, зависимости установлены, датасет обрабатывается
@@ -26,40 +26,41 @@
 ## День 2: Backend Core - Database & Auth
 
 ### Задачи (12/12)
-- [ ] 2.1. Создать `.env` с конфигурацией
-- [ ] 2.2. Создать `app/config.py`
-- [ ] 2.3. Создать `app/db/session.py`
-- [ ] 2.4. Создать модель `User`
-- [ ] 2.5. Создать модель `Video`
-- [ ] 2.6. Создать модель `Analysis`
-- [ ] 2.7. Создать модель `Error` (БЕЗ reference_screenshot_path)
-- [ ] 2.8. Создать модель `TempUpload`
-- [ ] 2.9. Инициализировать Alembic
-- [ ] 2.10. Создать миграцию
-- [ ] 2.11. Применить миграцию
-- [ ] 2.12. Проверить таблицы в PostgreSQL
+- [x] 2.1. Создать `.env` с конфигурацией
+- [x] 2.2. Создать `app/config.py`
+- [x] 2.3. Создать `app/db/session.py`
+- [x] 2.4. Создать модель `User`
+- [x] 2.5. Создать модель `Video`
+- [x] 2.6. Создать модель `Analysis`
+- [x] 2.7. Создать модель `Error` (БЕЗ reference_screenshot_path)
+- [x] 2.8. Создать модель `TempUpload`
+- [x] 2.9. Создать `app/models/__init__.py`
+- [x] 2.10. Инициализировать Alembic
+- [x] 2.11. Создать миграцию
+- [x] 2.12. Применить миграцию
+- [x] 2.13. Проверить таблицы в PostgreSQL
 
 ### Backend Auth API (10/10)
-- [ ] 2.13. Создать `app/core/security.py` (JWT, bcrypt)
-- [ ] 2.14. Создать `app/schemas/user.py`
-- [ ] 2.15. Создать `app/api/deps.py` (get_current_user)
-- [ ] 2.16. Создать `app/api/auth.py` (register, login)
-- [ ] 2.17. Создать `app/api/users.py` (get_me, update_me)
-- [ ] 2.18. Создать `app/main.py`
-- [ ] 2.19. Запустить FastAPI сервер
-- [ ] 2.20. Проверить /docs
-- [ ] 2.21. Тест: регистрация через API
-- [ ] 2.22. Тест: вход через API
+- [x] 2.14. Создать `app/core/security.py` (JWT, bcrypt)
+- [x] 2.15. Создать `app/schemas/user.py`
+- [x] 2.16. Создать `app/api/deps.py` (get_current_user)
+- [x] 2.17. Создать `app/api/auth.py` (register, login)
+- [x] 2.18. Создать `app/api/users.py` (get_me, update_me)
+- [x] 2.19. Создать `app/main.py`
+- [x] 2.20. Запустить FastAPI сервер
+- [x] 2.21. Проверить /docs
+- [x] 2.21. Тест: регистрация через API
+- [x] 2.22. Тест: вход через API
 
 ### Frontend Auth UI (8/8)
-- [ ] 2.23. Создать `services/api.ts`
-- [ ] 2.24. Создать `services/authService.ts`
-- [ ] 2.25. Создать `pages/LoginPage.tsx`
-- [ ] 2.26. Создать `pages/RegisterPage.tsx`
-- [ ] 2.27. Создать `pages/UploadPage.tsx` (заглушка)
-- [ ] 2.28. Создать `App.tsx` с роутингом
-- [ ] 2.29. Обновить `main.tsx`
-- [ ] 2.30. Запустить Frontend
+- [x] 2.23. Создать `services/api.ts`
+- [x] 2.24. Создать `services/authService.ts`
+- [x] 2.25. Создать `pages/LoginPage.tsx`
+- [x] 2.26. Создать `pages/RegisterPage.tsx`
+- [x] 2.27. Создать `pages/UploadPage.tsx` (заглушка)
+- [x] 2.28. Создать `App.tsx` с роутингом
+- [x] 2.29. Обновить `main.tsx`
+- [x] 2.30. Запустить Frontend
 
 ### Результат
 ✅ Auth полностью работает E2E (Backend + Frontend)

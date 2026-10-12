@@ -1,0 +1,114 @@
+"""
+Rhythm analysis service.
+
+Combines audio beat detection (librosa) with pose-based step detection
+(MediaPipe) to evaluate dance rhythm accuracy.
+"""
+
+import os
+import tempfile
+from typing import Dict, List, Any
+
+from app.services.audio_service import audio_service
+from app.services.pose_service import pose_service
+from app.utils.video_utils import extract_audio, validate_video
+
+
+class RhythmService:
+    """Service for local rhythm analysis."""
+
+    def __init__(self, beat_tolerance: float = 0.15):
+        """
+        Initialize rhythm service.
+
+        Args:
+            beat_tolerance: Allowed deviation from beat in seconds
+        """
+        self.beat_tolerance = beat_tolerance
+
+    def analyze_rhythm(self, video_path: str) -> Dict[str, Any]:
+        """
+        Full rhythm analysis pipeline.
+
+        1. Validate video
+        2. Extract audio (FFmpeg)
+        3. Detect beats (librosa)
+        4. Extract poses (MediaPipe)
+        5. Detect steps
+        6. Match steps to beats
+        7. Calculate score and errors
+
+        Args:
+            video_path: Path to video file
+
+        Returns:
+            Dict with tempo, total_beats, total_steps, accuracy,
+            rhythm_score, errors
+
+        Raises:
+            RuntimeError: If any pipeline step fails
+        """
+        # 1. Validate
+        validation = validate_video(video_path)
+        video_info = validation["info"]
+
+        # 2. Extract audio to temp file
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            audio_path = tmp.name
+
+        try:
+            extract_audio(video_path, audio_path)
+
+            # 3. Analyze audio
+            audio_result = audio_service.analyze_audio(audio_path)
+            beats = audio_result["beats"]
+            tempo = audio_result["tempo"]
+
+            # 4. Extract poses
+            poses = pose_service.extract_poses_from_video(video_path)
+
+            # 5. Detect steps
+            steps = pose_service.detect_steps(poses)
+            step_times = [s["timestamp"] for s in steps]
+
+            # 6. Match steps to beats
+            rhythm_stats = audio_service.calculate_rhythm_accuracy(
+                step_times, beats, self.beat_tolerance
+            )
+
+            # 7. Calculate score (0-100)
+            rhythm_score = rhythm_stats["accuracy"]
+
+            # Build error list for off-beat steps (limit to 10)
+            errors = []
+            for off_step in rhythm_stats["off_beat_steps"][:10]:
+                errors.append({
+                    "timestamp": off_step["timestamp"],
+                    "category": "rhythm",
+                    "severity": "medium" if off_step["deviation"] < 0.3 else "high",
+                    "title": "Шаг не в бит",
+                    "description": f"Шаг на {off_step['timestamp']:.2f}с отклоняется от бита на {off_step['deviation']:.2f}с",
+                    "recommendation": "Слушайте бит музыки и старайтесь попадать шагом точно в удар",
+                    "detected_element": None
+                })
+
+            return {
+                "tempo": tempo,
+                "total_beats": audio_result["total_beats"],
+                "total_steps": rhythm_stats["total"],
+                "steps_on_beat": rhythm_stats["on_beat"],
+                "accuracy": rhythm_stats["accuracy"],
+                "rhythm_score": round(rhythm_score, 1),
+                "duration": audio_result["duration"],
+                "video_duration": video_info["duration"],
+                "errors": errors
+            }
+
+        finally:
+            # Cleanup temp audio
+            if os.path.exists(audio_path):
+                os.unlink(audio_path)
+
+
+# Singleton instance
+rhythm_service = RhythmService()

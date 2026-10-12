@@ -51,8 +51,10 @@ env/
 logs/
 
 # Uploads
-backend/data/uploads/temp/*
-backend/data/uploads/saved/*
+backend/data/uploads/*
+backend/data/temp/*
+backend/data/screenshots/*
+backend/data/reference_poses/*.json
 !backend/data/uploads/temp/.gitkeep
 !backend/data/uploads/saved/.gitkeep
 
