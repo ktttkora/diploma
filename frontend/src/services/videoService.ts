@@ -1,24 +1,25 @@
 /**
- * Video service.
- *
- * Handles upload, listing, retrieval, and deletion of videos.
+ * Video service: upload, listing, streaming, deletion.
  */
 
 import api from './api';
-import type { Video, VideoListResponse } from '../types';
+import type { Video, VideoUploadResponse, VideoListResponse } from '../types';
 
 export const videoService = {
   /**
-   * Upload a video file.
+   * Upload a video and queue its analysis.
    *
    * @param file Video file
    * @param onProgress Optional progress callback (0-100)
    */
-  async upload(file: File, onProgress?: (percent: number) => void): Promise<Video> {
+  async upload(
+    file: File,
+    onProgress?: (percent: number) => void
+  ): Promise<VideoUploadResponse> {
     const formData = new FormData();
     formData.append('file', file);
 
-    const response = await api.post<Video>('/api/videos/', formData, {
+    const response = await api.post<VideoUploadResponse>('/api/videos/', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
       onUploadProgress: (event) => {
         if (onProgress && event.total) {
@@ -31,17 +32,27 @@ export const videoService = {
   },
 
   /**
-   * List user's videos (paginated).
+   * List the current user's videos.
    */
-  async list(page = 1, pageSize = 20): Promise<VideoListResponse> {
+  async list(page = 1, pageSize = 20, savedOnly = false): Promise<VideoListResponse> {
     const response = await api.get<VideoListResponse>('/api/videos/', {
+      params: { page, page_size: pageSize, saved_only: savedOnly },
+    });
+    return response.data;
+  },
+
+  /**
+   * List the user's saved videos (analysis history).
+   */
+  async history(page = 1, pageSize = 20): Promise<VideoListResponse> {
+    const response = await api.get<VideoListResponse>('/api/videos/history', {
       params: { page, page_size: pageSize },
     });
     return response.data;
   },
 
   /**
-   * Get single video by ID.
+   * Get a single video.
    */
   async get(videoId: number): Promise<Video> {
     const response = await api.get<Video>(`/api/videos/${videoId}`);
@@ -49,10 +60,20 @@ export const videoService = {
   },
 
   /**
-   * Delete video and its files.
+   * Delete a video and everything derived from it.
    */
   async delete(videoId: number): Promise<void> {
     await api.delete(`/api/videos/${videoId}`);
+  },
+
+  /**
+   * URL for streaming a video in a player.
+   *
+   * Served through the API with the Authorization header, so the caller
+   * must fetch it with an authenticated request rather than a plain src.
+   */
+  streamUrl(videoId: number): string {
+    return `${api.defaults.baseURL}/api/videos/${videoId}/stream`;
   },
 };
 

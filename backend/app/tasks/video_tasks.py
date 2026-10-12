@@ -1,15 +1,17 @@
 """
-Updated video processing task with full pipeline integration.
+Main video processing pipeline (Celery task).
 
-Integrates: RhythmService -> ClaudeService -> VisualizationService -> DB save
+Steps: local rhythm analysis, key-frame extraction, AI analysis,
+error merging, top-10 selection, screenshot generation, DB persistence.
 """
 
 from celery import shared_task
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from datetime import datetime
 from pathlib import Path
+import json
 import tempfile
-import os
+import time
 
 from app.core.celery_app import celery_app
 from app.db.session import SessionLocal
@@ -25,28 +27,127 @@ SEVERITY_MAP = {
     "critical": ErrorSeverity.CRITICAL
 }
 
+# Sort order for picking the top errors: most severe first
+SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+
+MAX_ERRORS = 10
+AI_FRAME_COUNT = 20
+
+# Errors of one category closer than this (seconds) describe the same moment
+DUPLICATE_WINDOW = 0.25
+
+
+def _set_progress(task, step: int, total: int, message: str) -> None:
+    """
+    Report progress through Celery's result backend.
+
+    Args:
+        task: Bound Celery task
+        step: Current step number (1-indexed)
+        total: Total number of steps
+        message: Human-readable stage description
+    """
+    try:
+        task.update_state(
+            state="PROGRESS",
+            meta={"step": step, "total": total, "message": message}
+        )
+    except Exception:
+        pass  # Progress reporting is best-effort
+
+
+def _merge_errors(
+    rhythm_errors: List[Dict[str, Any]],
+    ai_errors: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """
+    Merge rhythm and AI errors, then keep the most severe ones.
+
+    Args:
+        rhythm_errors: Errors from local rhythm analysis
+        ai_errors: Errors from AI analysis
+
+    Returns:
+        Up to MAX_ERRORS errors, sorted by severity then timestamp
+    """
+    merged: List[Dict[str, Any]] = []
+
+    for err in rhythm_errors:
+        merged.append({
+            "timestamp": float(err.get("timestamp", 0)),
+            "category": "rhythm",
+            "severity": err.get("severity", "medium"),
+            "title": err.get("title", "Ошибка ритма"),
+            "description": err.get("description", ""),
+            "recommendation": err.get("recommendation", ""),
+            "detected_element": err.get("detected_element"),
+        })
+
+    for err in ai_errors:
+        merged.append({
+            "timestamp": float(err.get("timestamp", 0)),
+            "category": err.get("category", "technique"),
+            "severity": err.get("severity", "medium"),
+            "title": err.get("title", "Ошибка техники"),
+            "description": err.get("description", ""),
+            "recommendation": err.get("recommendation", ""),
+            "detected_element": err.get("detected_element"),
+        })
+
+    merged.sort(key=lambda e: (
+        SEVERITY_ORDER.get(e["severity"], 2),
+        e["timestamp"]
+    ))
+
+    # Drop near-duplicates: the same kind of error reported again within
+    # DUPLICATE_WINDOW seconds. The more severe one wins, since it sorts first.
+    unique: List[Dict[str, Any]] = []
+    for err in merged:
+        is_duplicate = any(
+            kept["category"] == err["category"]
+            and abs(kept["timestamp"] - err["timestamp"]) < DUPLICATE_WINDOW
+            for kept in unique
+        )
+        if not is_duplicate:
+            unique.append(err)
+
+    return unique[:MAX_ERRORS]
+
+
+def _average(*values: Optional[float]) -> Optional[float]:
+    """
+    Average the values that are present.
+
+    Args:
+        *values: Scores, or None for a skipped category
+
+    Returns:
+        Mean of the non-None values, or None if there are none
+    """
+    present = [v for v in values if v is not None]
+    if not present:
+        return None
+    return round(sum(present) / len(present), 1)
+
 
 @celery_app.task(name="app.tasks.video_tasks.process_video_task", bind=True)
 def process_video_task(self, video_id: int, analysis_id: int) -> Dict[str, Any]:
     """
-    Full video processing pipeline.
-
-    Steps:
-    1. Rhythm analysis (local: MediaPipe + librosa)
-    2. Extract key frames for Claude
-    3. Claude API analysis (posture/technique/musicality)
-    4. Merge all errors, take top-10 by severity
-    5. Generate screenshots for each error
-    6. Calculate scores, save to DB
+    Run the full analysis pipeline for one video.
 
     Args:
-        video_id: Video ID to process
-        analysis_id: Analysis ID to update
+        video_id: Video to process
+        analysis_id: Analysis row to update
 
     Returns:
-        Dict with processing results
+        Summary of the run
+
+    Raises:
+        Exception: Re-raised after marking the analysis FAILED
     """
     db = SessionLocal()
+    started = time.monotonic()
+
     try:
         video = db.query(Video).filter(Video.id == video_id).first()
         analysis = db.query(Analysis).filter(Analysis.id == analysis_id).first()
@@ -55,88 +156,74 @@ def process_video_task(self, video_id: int, analysis_id: int) -> Dict[str, Any]:
             return {"status": "failed", "error": "Video or analysis not found"}
 
         analysis.status = AnalysisStatus.PROCESSING
+        analysis.error_message = None
         db.commit()
 
-        # STEP 1: Local rhythm analysis
-        self.update_state(state="PROGRESS", meta={"step": 1, "total": 4, "message": "Analyzing rhythm..."})
+        # Step 1: local rhythm analysis (MediaPipe + librosa)
+        _set_progress(self, 1, 4, "Анализ ритма")
         from app.services.rhythm_service import rhythm_service
         rhythm_result = rhythm_service.analyze_rhythm(video.file_path)
         rhythm_errors = rhythm_result.get("errors", [])
+        rhythm_score = rhythm_result.get("rhythm_score")
 
-        # STEP 2: Extract key frames for Claude (evenly spaced, max 20)
-        self.update_state(state="PROGRESS", meta={"step": 2, "total": 4, "message": "Extracting frames..."})
-        from app.utils.video_utils import get_video_info
-        video_info = get_video_info(video.file_path)
-        duration = video_info.get("duration", 60)
+        # Step 2: extract key frames for AI analysis
+        _set_progress(self, 2, 4, "Извлечение кадров")
+        ai_result: Dict[str, Any] = {}
+        ai_error: Optional[str] = None
 
-        num_frames = min(20, max(5, int(duration / 10)))
-        timestamps = [duration * (i + 1) / (num_frames + 1) for i in range(num_frames)]
+        from app.services.claude_service import (
+            get_claude_service,
+            ClaudeUnavailableError
+        )
+        claude = get_claude_service()
 
-        from app.utils.video_utils import extract_frames_batch
-        with tempfile.TemporaryDirectory() as tmpdir:
-            frame_paths = extract_frames_batch(video.file_path, timestamps, tmpdir)
+        if claude.is_configured:
+            from app.utils.frame_extractor import extract_key_frames
+            with tempfile.TemporaryDirectory() as frames_dir:
+                frame_paths = extract_key_frames(
+                    video.file_path, frames_dir, count=AI_FRAME_COUNT
+                )
 
-            # STEP 3: Claude API analysis
-            self.update_state(state="PROGRESS", meta={"step": 3, "total": 4, "message": "AI analysis..."})
-            from app.services.claude_service import get_claude_service
-            claude_service = get_claude_service()
-            claude_result = claude_service.analyze_video(
-                frame_paths,
-                rhythm_errors,
-                tempo=rhythm_result.get("tempo")
+                # Step 3: AI analysis of posture, technique, musicality
+                _set_progress(self, 3, 4, "AI-анализ")
+                try:
+                    ai_result = claude.analyze_video(
+                        frame_paths,
+                        rhythm_errors,
+                        tempo=rhythm_result.get("tempo")
+                    )
+                except (ClaudeUnavailableError, RuntimeError) as exc:
+                    # Rhythm results are still useful, so record the AI
+                    # failure and finish with a partial analysis
+                    ai_error = str(exc)
+        else:
+            ai_error = (
+                "AI-анализ пропущен: не задан ANTHROPIC_API_KEY. "
+                "Оценки постуры, техники и музыкальности недоступны."
             )
 
-        # STEP 4: Merge errors and take top-10
-        self.update_state(state="PROGRESS", meta={"step": 4, "total": 4, "message": "Generating screenshots..."})
-        all_errors = []
+        # Step 4: merge errors, generate screenshots, persist results
+        _set_progress(self, 4, 4, "Генерация скриншотов")
 
-        # Add rhythm errors
-        for err in rhythm_errors:
-            all_errors.append({
-                "timestamp": err["timestamp"],
-                "category": "rhythm",
-                "severity": err.get("severity", "medium"),
-                "title": err.get("title", "Rhythm error"),
-                "description": err.get("description", ""),
-                "recommendation": err.get("recommendation", ""),
-                "detected_element": err.get("detected_element")
-            })
-
-        # Add Claude errors
-        for err in claude_result.get("errors", []):
-            all_errors.append({
-                "timestamp": err.get("timestamp", 0),
-                "category": err.get("category", "technique"),
-                "severity": err.get("severity", "medium"),
-                "title": err.get("title", ""),
-                "description": err.get("description", ""),
-                "recommendation": err.get("recommendation", ""),
-                "detected_element": err.get("detected_element")
-            })
-
-        # Sort by severity (critical > high > medium > low)
-        severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-        all_errors.sort(key=lambda e: (severity_order.get(e["severity"], 2), e["timestamp"]))
-        top_errors = all_errors[:10]
-
-        # STEP 5: Generate screenshots and save errors
         from app.services.visualization_service import visualization_service
 
-        saved_errors = []
-        for i, err in enumerate(top_errors):
+        top_errors = _merge_errors(rhythm_errors, ai_result.get("errors", []))
+
+        for err in top_errors:
             error_record = Error(
                 analysis_id=analysis_id,
-                element_name=err.get("detected_element") or "unknown",
+                element_name=err.get("detected_element") or "не определён",
                 timestamp=err["timestamp"],
                 error_type=err["category"],
                 severity=SEVERITY_MAP.get(err["severity"], ErrorSeverity.MEDIUM),
-                description=f"{err['title']}: {err['description']}",
-                screenshot_path=None  # Updated after generation
+                description=f"{err['title']}. {err['description']}".strip(),
+                screenshot_path=None
             )
             db.add(error_record)
-            db.flush()  # Get error ID
+            db.flush()
 
-            # Generate screenshot
+            # Screenshots are required for the results page, but a rendering
+            # failure should not lose the error itself
             try:
                 screenshot_path = visualization_service.create_error_screenshot(
                     video.file_path,
@@ -150,23 +237,24 @@ def process_video_task(self, video_id: int, analysis_id: int) -> Dict[str, Any]:
                     detected_element=err.get("detected_element")
                 )
                 error_record.screenshot_path = screenshot_path
-            except Exception as e:
-                # Screenshot failed, keep error without screenshot
-                error_record.description += f" [screenshot failed: {e}]"
+            except Exception as exc:
+                error_record.description += f" [скриншот недоступен: {exc}]"
 
-            saved_errors.append(error_record)
+        posture_score = ai_result.get("posture_score")
+        technique_score = ai_result.get("technique_score")
+        music_score = ai_result.get("musicality_score")
 
-        # STEP 6: Calculate scores and finalize
-        posture_score = claude_result.get("posture_score", 0)
-        technique_score = claude_result.get("technique_score", 0)
-        musicality_score = claude_result.get("musicality_score", 0)
-        rhythm_score = rhythm_result.get("rhythm_score", 0)
-
-        overall = round((posture_score + technique_score + musicality_score + rhythm_score) / 4, 1)
-
-        analysis.overall_score = overall
-        analysis.music_score = musicality_score
         analysis.rhythm_score = rhythm_score
+        analysis.posture_score = posture_score
+        analysis.technique_score = technique_score
+        analysis.music_score = music_score
+        analysis.overall_score = _average(
+            rhythm_score, posture_score, technique_score, music_score
+        )
+        analysis.total_errors = len(top_errors)
+        analysis.processing_time = round(time.monotonic() - started, 2)
+        analysis.ai_response = json.dumps(ai_result, ensure_ascii=False) if ai_result else None
+        analysis.error_message = ai_error
         analysis.status = AnalysisStatus.COMPLETED
         analysis.completed_at = datetime.utcnow()
         db.commit()
@@ -175,19 +263,23 @@ def process_video_task(self, video_id: int, analysis_id: int) -> Dict[str, Any]:
             "status": "completed",
             "analysis_id": analysis_id,
             "video_id": video_id,
-            "overall_score": overall,
-            "total_errors": len(saved_errors)
+            "overall_score": analysis.overall_score,
+            "total_errors": len(top_errors),
+            "ai_analyzed": bool(ai_result)
         }
 
-    except Exception as e:
+    except Exception as exc:
+        db.rollback()
         try:
             analysis = db.query(Analysis).filter(Analysis.id == analysis_id).first()
             if analysis:
                 analysis.status = AnalysisStatus.FAILED
+                analysis.error_message = str(exc)
+                analysis.processing_time = round(time.monotonic() - started, 2)
+                analysis.completed_at = datetime.utcnow()
                 db.commit()
         except Exception:
             pass
-        # Re-raise so Celery marks task as failed
         raise
     finally:
         db.close()

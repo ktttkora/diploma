@@ -119,58 +119,195 @@ class PoseService:
 
         return poses
 
-    def detect_steps(self, poses: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def detect_steps(
+        self,
+        poses: List[Dict[str, Any]],
+        min_interval: float = 0.25,
+        min_amplitude: float = 0.03,
+        max_gap: float = 0.2
+    ) -> List[Dict[str, Any]]:
         """
         Detect dance steps from ankle movement.
 
-        A step is detected when ankle vertical velocity exceeds threshold
-        and changes direction (foot lift + placement).
+        A step is one swing of the foot. The ankle rises during the lift and
+        starts falling again at the top of that swing, so the step is
+        recorded at that turning point: the end of the lift, where the foot
+        begins to come down. Detecting the turning point instead of each
+        frame of movement gives one step per physical step, no matter how
+        long the swing lasts or what the frame rate is.
+
+        Amplitude is accumulated in normalised coordinates, so the result
+        does not depend on the video's frame rate. min_interval is only a
+        debounce against a foot flapping back and forth from tracking noise.
+
+        The exact phase relative to the music is not calibrated: the turning
+        point sits slightly before the foot lands, and matching that to a
+        beat needs real footage with a known beat to check against.
 
         Args:
             poses: List of pose dicts from extract_poses_from_video
+            min_interval: Minimum time between two steps in seconds
+            min_amplitude: Minimum swing size (normalised units) to count as a step
+            max_gap: Reset tracking state when frames are further apart than this
 
         Returns:
             List of {timestamp, foot, type}
         """
-        steps = []
-        threshold = 0.015  # Normalized coordinate movement threshold
+        NOISE = 0.002  # Ignore sub-pixel jitter in the landmarks
+        LIFT = -1      # Ankle moving up the frame (y decreasing)
+        PLACE = 1      # Ankle moving down the frame (y increasing)
 
-        prev_left_y: Optional[float] = None
-        prev_right_y: Optional[float] = None
+        steps: List[Dict[str, Any]] = []
+        prev_y: Dict[str, Optional[float]] = {"left": None, "right": None}
+        direction: Dict[str, int] = {"left": 0, "right": 0}
+        amplitude: Dict[str, float] = {"left": 0.0, "right": 0.0}
+        prev_timestamp: Optional[float] = None
+        last_step_time: Optional[float] = None
+
+        def reset_tracking() -> None:
+            """Drop per-foot state so a gap is not credited to one step."""
+            prev_y["left"] = prev_y["right"] = None
+            direction["left"] = direction["right"] = 0
+            amplitude["left"] = amplitude["right"] = 0.0
 
         for pose in poses:
+            # A frame without a pose breaks the motion chain
             if not pose.get("detected") or not pose.get("landmarks"):
+                reset_tracking()
+                prev_timestamp = None
                 continue
 
             landmarks = pose["landmarks"]
             if len(landmarks) <= max(self.LEFT_ANKLE, self.RIGHT_ANKLE):
                 continue
 
-            left_y = landmarks[self.LEFT_ANKLE]["y"]
-            right_y = landmarks[self.RIGHT_ANKLE]["y"]
+            timestamp = pose["timestamp"]
 
-            # Check left foot movement
-            if prev_left_y is not None:
-                if abs(left_y - prev_left_y) > threshold:
-                    steps.append({
-                        "timestamp": pose["timestamp"],
-                        "foot": "left",
-                        "type": "step"
-                    })
+            # A long gap makes the movement between frames unreliable
+            if prev_timestamp is not None and timestamp - prev_timestamp > max_gap:
+                reset_tracking()
 
-            # Check right foot movement
-            if prev_right_y is not None:
-                if abs(right_y - prev_right_y) > threshold:
-                    steps.append({
-                        "timestamp": pose["timestamp"],
-                        "foot": "right",
-                        "type": "step"
-                    })
+            turning: Dict[str, float] = {}
 
-            prev_left_y = left_y
-            prev_right_y = right_y
+            for foot, index in (("left", self.LEFT_ANKLE),
+                                ("right", self.RIGHT_ANKLE)):
+                y = landmarks[index]["y"]
+
+                if prev_y[foot] is None:
+                    prev_y[foot] = y
+                    continue
+
+                delta = y - prev_y[foot]
+                prev_y[foot] = y
+
+                if abs(delta) < NOISE:
+                    continue
+
+                sign = PLACE if delta > 0 else LIFT
+
+                if direction[foot] == 0 or sign == direction[foot]:
+                    # Still moving the same way; keep accumulating the swing
+                    direction[foot] = sign
+                    amplitude[foot] += abs(delta)
+                    continue
+
+                # Direction reversed. Only the top of the swing ends a step;
+                # the bottom is the foot resting and starting its next lift.
+                if direction[foot] == LIFT and amplitude[foot] >= min_amplitude:
+                    turning[foot] = amplitude[foot]
+
+                direction[foot] = sign
+                amplitude[foot] = abs(delta)
+
+            prev_timestamp = timestamp
+
+            if not turning:
+                continue
+
+            # Debounce: a foot flapping from noise is one step, not several
+            if (last_step_time is not None
+                    and timestamp - last_step_time < min_interval):
+                continue
+
+            # Both feet can turn in one frame; attribute the step to the
+            # foot that swung further
+            foot = max(turning, key=lambda f: turning[f])
+            steps.append({
+                "timestamp": timestamp,
+                "foot": foot,
+                "type": "step"
+            })
+            last_step_time = timestamp
 
         return steps
+
+    def detect_pose_on_image(self, image: np.ndarray) -> Optional[List[Dict[str, float]]]:
+        """
+        Detect a pose on a single image.
+
+        Used when only one moment matters (for example drawing a skeleton
+        on an error screenshot). Far cheaper than scanning a whole video.
+
+        Args:
+            image: OpenCV image in BGR order
+
+        Returns:
+            List of 33 landmark dicts, or None if no pose was found
+        """
+        if image is None or image.size == 0:
+            return None
+
+        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+        with mp_pose.Pose(
+            static_image_mode=True,
+            model_complexity=1,
+            min_detection_confidence=self.min_detection
+        ) as pose:
+            result = pose.process(image_rgb)
+
+            if not result.pose_landmarks:
+                return None
+
+            return [
+                {
+                    "x": float(lm.x),
+                    "y": float(lm.y),
+                    "z": float(lm.z),
+                    "visibility": float(lm.visibility)
+                }
+                for lm in result.pose_landmarks.landmark
+            ]
+
+    def find_pose_at(
+        self,
+        poses: List[Dict[str, Any]],
+        timestamp: float,
+        tolerance: float = 0.5
+    ) -> Optional[List[Dict[str, float]]]:
+        """
+        Find the detected pose closest to a timestamp.
+
+        Args:
+            poses: Poses from extract_poses_from_video
+            timestamp: Target timestamp in seconds
+            tolerance: Maximum distance in seconds
+
+        Returns:
+            Landmarks of the closest detected pose, or None
+        """
+        best: Optional[Dict[str, Any]] = None
+        best_distance = tolerance
+
+        for pose in poses:
+            if not pose.get("detected") or not pose.get("landmarks"):
+                continue
+            distance = abs(pose["timestamp"] - timestamp)
+            if distance <= best_distance:
+                best = pose
+                best_distance = distance
+
+        return best["landmarks"] if best else None
 
     def calculate_angles(self, landmarks: List[Dict[str, float]]) -> Dict[str, float]:
         """

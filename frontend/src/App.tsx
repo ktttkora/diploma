@@ -1,5 +1,5 @@
 /**
- * Application root with routing and theme.
+ * Application root: routing and theme.
  */
 
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
@@ -7,6 +7,9 @@ import { ThemeProvider, createTheme, CssBaseline } from '@mui/material';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import UploadPage from './pages/UploadPage';
+import ProcessingPage from './pages/ProcessingPage';
+import ResultsPage from './pages/ResultsPage';
+import HistoryPage from './pages/HistoryPage';
 import authService from './services/authService';
 
 const theme = createTheme({
@@ -23,16 +26,12 @@ const theme = createTheme({
   },
 });
 
-/**
- * Route guard: redirect to login if not authenticated.
- */
+/** Redirect to login when the visitor is not authenticated. */
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   return authService.isAuthenticated() ? <>{children}</> : <Navigate to="/login" replace />;
 }
 
-/**
- * Route guard: redirect to upload if already authenticated.
- */
+/** Redirect to the upload page when the visitor is already authenticated. */
 function PublicRoute({ children }: { children: React.ReactNode }) {
   return authService.isAuthenticated() ? <Navigate to="/upload" replace /> : <>{children}</>;
 }
@@ -64,6 +63,30 @@ export default function App() {
             element={
               <PrivateRoute>
                 <UploadPage />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/processing/:analysisId"
+            element={
+              <PrivateRoute>
+                <ProcessingPage />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/results/:analysisId"
+            element={
+              <PrivateRoute>
+                <ResultsPage />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/history"
+            element={
+              <PrivateRoute>
+                <HistoryPage />
               </PrivateRoute>
             }
           />

@@ -27,6 +27,8 @@ class Settings(BaseSettings):
 
     # Anthropic API
     ANTHROPIC_API_KEY: str
+    CLAUDE_MODEL: str = ""
+    AI_ENABLED: bool = True
 
     # File Storage
     UPLOAD_FOLDER: str = "data/uploads"
@@ -34,6 +36,7 @@ class Settings(BaseSettings):
     SCREENSHOTS_FOLDER: str = "data/screenshots"
     MAX_UPLOAD_SIZE: int = 1073741824  # 1GB
     MAX_VIDEO_DURATION: int = 600  # 10 minutes
+    TEMP_UPLOAD_TTL_HOURS: int = 24
 
     # CORS
     CORS_ORIGINS: List[str] = ["http://localhost:3000"]

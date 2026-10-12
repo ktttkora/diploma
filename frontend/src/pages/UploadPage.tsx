@@ -86,8 +86,9 @@ export default function UploadPage() {
     setError('');
 
     try {
-      const video = await videoService.upload(file, setProgress);
-      navigate(`/processing/${video.id}`);
+      const response = await videoService.upload(file, setProgress);
+      // The upload queues an analysis; follow its progress
+      navigate(`/processing/${response.analysis_id}`);
     } catch (err) {
       const axiosError = err as AxiosError<ApiError>;
       setError(axiosError.response?.data?.detail || 'Ошибка загрузки. Попробуйте позже.');

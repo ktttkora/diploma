@@ -5,7 +5,7 @@ Provides reusable dependencies for FastAPI endpoints.
 """
 
 from typing import Optional
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Query, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
@@ -18,27 +18,19 @@ from app.core.security import verify_token
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
 
-def get_current_user(
-    token: str = Depends(oauth2_scheme),
-    db: Session = Depends(get_db)
-) -> User:
+def _load_user_by_token(token: Optional[str], db: Session) -> User:
     """
-    Get current authenticated user from JWT token.
+    Resolve a user from a JWT token.
 
     Args:
-        token: JWT token from Authorization header
+        token: JWT token, or None
         db: Database session
 
     Returns:
-        User object
+        User instance
 
     Raises:
-        HTTPException: If token is invalid or user not found
-
-    Example:
-        @app.get("/me")
-        def get_me(user: User = Depends(get_current_user)):
-            return {"email": user.email}
+        HTTPException 401: If the token is missing, invalid, or unknown
     """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -46,18 +38,70 @@ def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
 
-    # Verify token and extract email
+    if not token:
+        raise credentials_exception
+
     email = verify_token(token)
     if email is None:
         raise credentials_exception
 
-    # Get user from database
     user = db.query(User).filter(User.email == email).first()
-
     if user is None:
         raise credentials_exception
 
     return user
+
+
+def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db)
+) -> User:
+    """
+    Get the authenticated user from the Authorization header.
+
+    Args:
+        token: JWT token from the Authorization header
+        db: Database session
+
+    Returns:
+        User object
+
+    Example:
+        @app.get("/me")
+        def get_me(user: User = Depends(get_current_user)):
+            return {"email": user.email}
+    """
+    return _load_user_by_token(token, db)
+
+
+def get_current_user_media(
+    request: Request,
+    token: Optional[str] = Query(
+        None,
+        description="JWT token, for media elements that cannot set headers"
+    ),
+    db: Session = Depends(get_db)
+) -> User:
+    """
+    Get the authenticated user for a media request.
+
+    <video> and <img> cannot send an Authorization header, so these
+    endpoints also accept the token as a query parameter.
+
+    Args:
+        request: Incoming request
+        token: JWT token from the query string
+        db: Database session
+
+    Returns:
+        User object
+    """
+    if not token:
+        header = request.headers.get("Authorization", "")
+        if header.lower().startswith("bearer "):
+            token = header[7:].strip()
+
+    return _load_user_by_token(token, db)
 
 
 def get_current_user_optional(
@@ -65,12 +109,10 @@ def get_current_user_optional(
     db: Session = Depends(get_db)
 ) -> Optional[User]:
     """
-    Get current user if authenticated, None otherwise.
-
-    Useful for endpoints that work both authenticated and unauthenticated.
+    Get the current user if authenticated, otherwise None.
 
     Args:
-        token: JWT token from Authorization header (optional)
+        token: JWT token from the Authorization header (optional)
         db: Database session
 
     Returns:
@@ -80,6 +122,6 @@ def get_current_user_optional(
         return None
 
     try:
-        return get_current_user(token, db)
+        return _load_user_by_token(token, db)
     except HTTPException:
         return None

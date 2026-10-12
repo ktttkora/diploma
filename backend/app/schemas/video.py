@@ -6,13 +6,8 @@ Defines request/response models for video-related API endpoints.
 
 from pydantic import BaseModel, Field
 from datetime import datetime
-from typing import Optional
-
-
-class VideoUpload(BaseModel):
-    """Schema for video upload metadata."""
-    filename: str = Field(..., description="Original filename")
-    content_type: str = Field(..., description="MIME type (video/mp4, video/avi, etc.)")
+from typing import Optional, List
+from app.models.analysis import AnalysisStatus
 
 
 class VideoResponse(BaseModel):
@@ -20,18 +15,27 @@ class VideoResponse(BaseModel):
     id: int
     user_id: int
     filename: str
-    file_path: str
     file_size: int
-    duration: Optional[float]
+    duration: float
+    fps: float
+    is_saved: bool
     uploaded_at: datetime
+    saved_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
 
 
+class VideoUploadResponse(BaseModel):
+    """Schema returned after a successful upload."""
+    video: VideoResponse
+    analysis_id: int
+    status: AnalysisStatus
+
+
 class VideoListResponse(BaseModel):
     """Schema for paginated video list."""
-    videos: list[VideoResponse]
+    videos: List[VideoResponse]
     total: int
     page: int
     page_size: int

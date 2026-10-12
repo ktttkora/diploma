@@ -4,15 +4,10 @@ Analysis Pydantic schemas.
 Defines request/response models for analysis-related API endpoints.
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional, List
 from app.models.analysis import AnalysisStatus
-
-
-class AnalysisCreate(BaseModel):
-    """Schema for creating a new analysis."""
-    video_id: int = Field(..., description="Video ID to analyze")
 
 
 class AnalysisResponse(BaseModel):
@@ -20,11 +15,28 @@ class AnalysisResponse(BaseModel):
     id: int
     video_id: int
     status: AnalysisStatus
-    overall_score: Optional[float]
-    music_score: Optional[float]
-    rhythm_score: Optional[float]
+    overall_score: Optional[float] = None
+    rhythm_score: Optional[float] = None
+    posture_score: Optional[float] = None
+    technique_score: Optional[float] = None
+    music_score: Optional[float] = None
+    total_errors: int = 0
+    processing_time: Optional[float] = None
+    error_message: Optional[str] = None
     started_at: datetime
-    completed_at: Optional[datetime]
+    completed_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class AnalysisStatusResponse(BaseModel):
+    """Schema for polling analysis progress."""
+    id: int
+    status: AnalysisStatus
+    total_errors: int = 0
+    overall_score: Optional[float] = None
+    error_message: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -44,17 +56,31 @@ class AnalysisDetailResponse(BaseModel):
     id: int
     video_id: int
     status: AnalysisStatus
-    overall_score: Optional[float]
-    music_score: Optional[float]
-    rhythm_score: Optional[float]
+    overall_score: Optional[float] = None
+    rhythm_score: Optional[float] = None
+    posture_score: Optional[float] = None
+    technique_score: Optional[float] = None
+    music_score: Optional[float] = None
+    total_errors: int = 0
+    processing_time: Optional[float] = None
+    error_message: Optional[str] = None
     started_at: datetime
-    completed_at: Optional[datetime]
-    errors: List["ErrorResponse"]
+    completed_at: Optional[datetime] = None
+    errors: List["ErrorResponse"] = []
 
     class Config:
         from_attributes = True
 
 
-# Forward reference for ErrorResponse
-from app.schemas.error import ErrorResponse
+class SaveAnalysisResponse(BaseModel):
+    """Schema for save/discard confirmation."""
+    message: str
+    analysis_id: int
+    video_id: int
+    is_saved: bool
+
+
+# Resolve the forward reference to ErrorResponse
+from app.schemas.error import ErrorResponse  # noqa: E402
+
 AnalysisDetailResponse.model_rebuild()

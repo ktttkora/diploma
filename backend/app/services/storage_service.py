@@ -128,7 +128,8 @@ class StorageService:
         with open(file_path, "wb") as f:
             f.write(image_data)
 
-        return str(file_path)
+        # Forward slashes keep stored paths identical across Windows and Linux
+        return file_path.as_posix()
 
     def delete_file(self, file_path: str) -> bool:
         """

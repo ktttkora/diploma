@@ -4,7 +4,7 @@ Analysis database model.
 Represents analysis results for uploaded videos.
 """
 
-from sqlalchemy import String, Integer, Float, ForeignKey, DateTime, Enum as SQLEnum
+from sqlalchemy import String, Integer, Float, ForeignKey, DateTime, Text, Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 from datetime import datetime
@@ -31,8 +31,14 @@ class Analysis(Base):
         video_id: Analyzed video ID (foreign key)
         status: Processing status
         overall_score: Combined score (0-100)
-        music_score: Music quality score (0-100)
         rhythm_score: Rhythm matching score (0-100)
+        posture_score: Posture score from AI analysis (0-100)
+        technique_score: Technique score from AI analysis (0-100)
+        music_score: Musicality score (0-100)
+        total_errors: Number of errors found
+        processing_time: Seconds spent processing
+        ai_response: Raw AI response (JSON string) for debugging
+        error_message: Failure reason when status is FAILED
         started_at: When analysis started
         completed_at: When analysis finished (null if not completed)
         video: Related Video
@@ -56,8 +62,15 @@ class Analysis(Base):
     )
 
     overall_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    music_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     rhythm_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    posture_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    technique_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    music_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    total_errors: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    processing_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    ai_response: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
