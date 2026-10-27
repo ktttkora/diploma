@@ -92,3 +92,6 @@ htmlcov/
 
 # Alembic
 alembic/versions/*.pyc
+
+# Reference dance videos dataset (13 GB, kept locally only)
+hasl_files/
