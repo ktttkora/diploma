@@ -192,7 +192,8 @@ def process_video_task(self, video_id: int, analysis_id: int) -> Dict[str, Any]:
                         rhythm_errors,
                         tempo=rhythm_result.get("tempo"),
                         user_poses=rhythm_result.get("poses"),
-                        user_aspect=rhythm_result.get("video_aspect")
+                        user_aspect=rhythm_result.get("video_aspect"),
+                        duration=video.duration
                     )
                 except (ClaudeUnavailableError, RuntimeError) as exc:
                     # Rhythm results are still useful, so record the AI
@@ -200,7 +201,7 @@ def process_video_task(self, video_id: int, analysis_id: int) -> Dict[str, Any]:
                     ai_error = str(exc)
         else:
             ai_error = (
-                "AI-анализ пропущен: не задан ключ API модели. "
+                "AI-анализ пропущен: AI-провайдер не настроен или недоступен. "
                 "Оценки постуры, техники и музыкальности недоступны."
             )
 

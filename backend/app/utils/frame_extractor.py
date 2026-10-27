@@ -5,6 +5,7 @@ Selects representative frames from a video for AI analysis:
 evenly-spaced sampling plus frames near detected motion peaks.
 """
 
+import re
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
@@ -97,6 +98,24 @@ def extract_key_frames(
             downscale_frame(path, max_width)
 
     return frame_paths
+
+
+# Matches the "<prefix>_<index>_<seconds>s.<ext>" names of extract_frames_batch
+_FRAME_TIMESTAMP_RE = re.compile(r"_(\d+(?:\.\d+)?)s\.(?:jpe?g|png)$", re.IGNORECASE)
+
+
+def parse_frame_timestamp(frame_path: str) -> Optional[float]:
+    """
+    Read the video timestamp encoded in a key frame file name.
+
+    Args:
+        frame_path: Path produced by extract_key_frames / extract_frames_batch
+
+    Returns:
+        Timestamp in seconds, or None if the name carries no timestamp
+    """
+    match = _FRAME_TIMESTAMP_RE.search(Path(frame_path).name)
+    return float(match.group(1)) if match else None
 
 
 def downscale_frame(frame_path: str, max_width: int) -> None:

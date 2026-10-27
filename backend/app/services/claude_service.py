@@ -58,6 +58,7 @@ ANALYSIS_PROMPT = """Ты - эксперт по технике танца хас
   ]
 }}
 
+timestamp - время ошибки в СЕКУНДАХ от начала видео: бери t кадра, на котором видна ошибка. Не пиши номер изображения.
 Категории ошибок: posture, technique, musicality
 Серьёзность: low, medium, high, critical
 
@@ -280,6 +281,28 @@ class ClaudeService:
         return readable
 
     @staticmethod
+    def _build_frames_section(frame_timestamps: List[Optional[float]]) -> str:
+        """
+        Build the prompt part that maps user images to video time.
+
+        Args:
+            frame_timestamps: Video time of each user frame in seconds,
+                None where unknown
+
+        Returns:
+            Section text, or "" when no timestamp is known
+        """
+        if not any(t is not None for t in frame_timestamps):
+            return ""
+        lines = ["", "КАДРЫ ВИДЕО (номер изображения и время от начала видео):"]
+        for index, timestamp in enumerate(frame_timestamps, start=1):
+            if timestamp is None:
+                lines.append(f"- Изображение {index}")
+            else:
+                lines.append(f"- Изображение {index} (t={timestamp:.2f} с)")
+        return "\n".join(lines) + "\n"
+
+    @staticmethod
     def _build_reference_sections(
         user_frame_count: int,
         catalog: Dict[str, str],
@@ -364,7 +387,9 @@ class ClaudeService:
         rhythm_errors: List[Dict[str, Any]],
         tempo: Optional[float] = None,
         user_poses: Optional[List[Dict[str, Any]]] = None,
-        user_aspect: Optional[float] = None
+        user_aspect: Optional[float] = None,
+        frame_timestamps: Optional[List[Optional[float]]] = None,
+        duration: Optional[float] = None
     ) -> Dict[str, Any]:
         """
         Analyze dance video frames with the AI model.
@@ -380,6 +405,9 @@ class ClaudeService:
             user_poses: MediaPipe poses of the user video, for example selection
             user_aspect: Frame width / height of the user video, needed to
                 compare poses with references of another orientation
+            frame_timestamps: Video time of each frame in seconds; parsed
+                from key frame file names when omitted
+            duration: Video duration in seconds, used to clamp error timestamps
 
         Returns:
             Dict with detected_elements, posture_score, technique_score,
@@ -397,6 +425,12 @@ class ClaudeService:
         if not frames:
             raise RuntimeError("No frames provided for analysis")
 
+        if frame_timestamps is None:
+            from app.utils.frame_extractor import parse_frame_timestamp
+            frame_timestamps = [parse_frame_timestamp(p) for p in frames]
+        frame_timestamps = list(frame_timestamps[:len(frames)])
+        frame_timestamps += [None] * (len(frames) - len(frame_timestamps))
+
         catalog = self._load_element_catalog()
         examples = (
             self._select_examples(user_poses, max_images - len(frames), user_aspect)
@@ -407,7 +441,7 @@ class ClaudeService:
         )
 
         prompt = ANALYSIS_PROMPT.format(
-            images_section=images_section,
+            images_section=self._build_frames_section(frame_timestamps) + images_section,
             rhythm_data=self._build_rhythm_summary(rhythm_errors, tempo),
             elements_section=elements_section,
             elements_task=elements_task,
@@ -431,7 +465,7 @@ class ClaudeService:
                 f"Failed to parse AI response as JSON: {exc}"
             ) from exc
 
-        return self._match_elements(self._normalize(parsed), catalog)
+        return self._match_elements(self._normalize(parsed, duration), catalog)
 
     @staticmethod
     def media_type(frame_path: str) -> str:
@@ -490,7 +524,11 @@ class ClaudeService:
             block.text for block in message.content if getattr(block, "text", None)
         )
 
-    def _normalize(self, parsed: Dict[str, Any]) -> Dict[str, Any]:
+    def _normalize(
+        self,
+        parsed: Dict[str, Any],
+        duration: Optional[float] = None
+    ) -> Dict[str, Any]:
         """
         Coerce a parsed AI response into the expected shape.
 
@@ -499,6 +537,8 @@ class ClaudeService:
 
         Args:
             parsed: Raw parsed JSON from the model
+            duration: Video duration in seconds; timestamps are clamped
+                to [0, duration] when it is known
 
         Returns:
             Normalized analysis dict
@@ -522,6 +562,8 @@ class ClaudeService:
                 timestamp = max(0.0, float(raw.get("timestamp", 0)))
             except (TypeError, ValueError):
                 timestamp = 0.0
+            if duration and duration > 0:
+                timestamp = min(timestamp, float(duration))
 
             errors.append({
                 "timestamp": timestamp,
@@ -568,8 +610,11 @@ def get_ai_service() -> ClaudeService:
     Get the AI service selected by settings.AI_PROVIDER.
 
     Returns:
-        ClaudeService or GLMService instance
+        ClaudeService, ClaudeCliService or GLMService instance
     """
+    if settings.AI_PROVIDER == "claude_cli":
+        from app.services.claude_cli_service import get_claude_cli_service
+        return get_claude_cli_service()
     if settings.AI_PROVIDER == "glm":
         from app.services.glm_service import get_glm_service
         return get_glm_service()

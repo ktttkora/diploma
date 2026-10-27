@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
 
-    # AI provider: "claude" or "glm"
+    # AI provider: "claude", "claude_cli" or "glm"
     AI_PROVIDER: str = "claude"
     AI_ENABLED: bool = True
 
@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str = ""
     ANTHROPIC_BASE_URL: str = ""
     CLAUDE_MODEL: str = ""
+
+    # Local Claude Code CLI (claude.ai subscription, no API key)
+    CLAUDE_CLI_PATH: str = "claude"
+    CLAUDE_CLI_MODEL: str = ""  # Empty = subscription default model
+    CLAUDE_CLI_TIMEOUT: int = 600  # Seconds before the CLI process is killed
 
     # Z.ai GLM API (OpenAI-compatible)
     GLM_API_KEY: str = ""
@@ -93,8 +98,8 @@ class Settings(BaseSettings):
     def validate_ai_provider(cls, v):
         """Validate AI_PROVIDER is a supported provider."""
         v = v.strip().lower()
-        if v not in ("claude", "glm"):
-            raise ValueError("AI_PROVIDER must be 'claude' or 'glm'")
+        if v not in ("claude", "claude_cli", "glm"):
+            raise ValueError("AI_PROVIDER must be 'claude', 'claude_cli' or 'glm'")
         return v
 
 
