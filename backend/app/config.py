@@ -25,10 +25,30 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
 
-    # Anthropic API
-    ANTHROPIC_API_KEY: str
-    CLAUDE_MODEL: str = ""
+    # AI provider: "claude" or "glm"
+    AI_PROVIDER: str = "claude"
     AI_ENABLED: bool = True
+
+    # Anthropic API
+    ANTHROPIC_API_KEY: str = ""
+    ANTHROPIC_BASE_URL: str = ""
+    CLAUDE_MODEL: str = ""
+
+    # Z.ai GLM API (OpenAI-compatible)
+    GLM_API_KEY: str = ""
+    GLM_BASE_URL: str = "https://api.z.ai/api/paas/v4"
+    GLM_MODEL: str = "glm-4.6v-flash"
+
+    # Reference examples passed to the AI for element recognition
+    AI_REFERENCE_EXAMPLES: bool = True
+    AI_REFERENCE_CANDIDATES: int = 8
+    AI_REFERENCE_FRAMES_PER_ELEMENT: int = 2
+    AI_REFERENCE_FRAME_MAX_SIDE: int = 512
+    # Total images per AI request: user frames + reference examples
+    AI_MAX_IMAGES: int = 30
+    REFERENCE_VIDEOS_FOLDER: str = "../hasl_files"
+    REFERENCE_FRAMES_FOLDER: str = "data/reference_frames"
+    REFERENCE_INDEX_PATH: str = "data/reference_index.json"
 
     # File Storage
     UPLOAD_FOLDER: str = "data/uploads"
@@ -68,14 +88,13 @@ class Settings(BaseSettings):
             )
         return v
 
-    @field_validator("ANTHROPIC_API_KEY")
+    @field_validator("AI_PROVIDER")
     @classmethod
-    def validate_anthropic_key(cls, v):
-        """Validate ANTHROPIC_API_KEY format."""
-        if not v.startswith("sk-ant-"):
-            raise ValueError(
-                "ANTHROPIC_API_KEY must start with 'sk-ant-'"
-            )
+    def validate_ai_provider(cls, v):
+        """Validate AI_PROVIDER is a supported provider."""
+        v = v.strip().lower()
+        if v not in ("claude", "glm"):
+            raise ValueError("AI_PROVIDER must be 'claude' or 'glm'")
         return v
 
 

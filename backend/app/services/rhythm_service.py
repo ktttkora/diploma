@@ -7,7 +7,7 @@ Combines audio beat detection (librosa) with pose-based step detection
 
 import os
 import tempfile
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 
 from app.services.audio_service import audio_service
 from app.services.pose_service import pose_service
@@ -43,7 +43,9 @@ class RhythmService:
 
         Returns:
             Dict with tempo, total_beats, total_steps, accuracy,
-            rhythm_score, errors
+            rhythm_score, errors, poses (MediaPipe poses of every frame,
+            reused for reference element matching) and video_aspect
+            (frame width / height, needed to compare those poses)
 
         Raises:
             RuntimeError: If any pipeline step fails
@@ -101,13 +103,46 @@ class RhythmService:
                 "rhythm_score": round(rhythm_score, 1),
                 "duration": audio_result["duration"],
                 "video_duration": video_info["duration"],
-                "errors": errors
+                "errors": errors,
+                # Reused for reference element matching, so MediaPipe runs once
+                "poses": poses,
+                "video_aspect": self._video_aspect(video_path, video_info)
             }
 
         finally:
             # Cleanup temp audio
             if os.path.exists(audio_path):
                 os.unlink(audio_path)
+
+    @staticmethod
+    def _video_aspect(video_path: str, video_info: Dict[str, Any]) -> Optional[float]:
+        """
+        Frame width / height of the video as MediaPipe sees it.
+
+        Reads a decoded frame (handles rotated phone videos), falling back
+        to the width/height reported by ffprobe.
+
+        Args:
+            video_path: Path to video file
+            video_info: Info from validate_video
+
+        Returns:
+            Aspect ratio, or None if unknown
+        """
+        from app.services.reference_service import PASSTHROUGH_EXCEPTIONS, get_video_aspect
+
+        try:
+            aspect = get_video_aspect(video_path)
+        except PASSTHROUGH_EXCEPTIONS:
+            raise
+        except Exception:
+            aspect = None
+        if aspect:
+            return aspect
+
+        width = video_info.get("width") or 0
+        height = video_info.get("height") or 0
+        return float(width) / float(height) if width and height else None
 
 
 # Singleton instance

@@ -172,10 +172,10 @@ def process_video_task(self, video_id: int, analysis_id: int) -> Dict[str, Any]:
         ai_error: Optional[str] = None
 
         from app.services.claude_service import (
-            get_claude_service,
+            get_ai_service,
             ClaudeUnavailableError
         )
-        claude = get_claude_service()
+        claude = get_ai_service()
 
         if claude.is_configured:
             from app.utils.frame_extractor import extract_key_frames
@@ -190,7 +190,9 @@ def process_video_task(self, video_id: int, analysis_id: int) -> Dict[str, Any]:
                     ai_result = claude.analyze_video(
                         frame_paths,
                         rhythm_errors,
-                        tempo=rhythm_result.get("tempo")
+                        tempo=rhythm_result.get("tempo"),
+                        user_poses=rhythm_result.get("poses"),
+                        user_aspect=rhythm_result.get("video_aspect")
                     )
                 except (ClaudeUnavailableError, RuntimeError) as exc:
                     # Rhythm results are still useful, so record the AI
@@ -198,7 +200,7 @@ def process_video_task(self, video_id: int, analysis_id: int) -> Dict[str, Any]:
                     ai_error = str(exc)
         else:
             ai_error = (
-                "AI-анализ пропущен: не задан ANTHROPIC_API_KEY. "
+                "AI-анализ пропущен: не задан ключ API модели. "
                 "Оценки постуры, техники и музыкальности недоступны."
             )
 
