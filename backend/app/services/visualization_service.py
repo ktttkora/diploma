@@ -42,66 +42,15 @@ POSE_CONNECTIONS: List[Tuple[int, int]] = [
 
 VISIBILITY_THRESHOLD = 0.3
 
-# BGR colours
+# BGR colours. One dancer is one colour: the user is red, the reference is green.
 RED = (0, 0, 255)
-ORANGE = (0, 140, 255)
 GREEN = (0, 200, 0)
-YELLOW = (0, 220, 255)
 WHITE = (255, 255, 255)
 LIGHT_GREY = (200, 200, 200)
 CAPTION_BG = (32, 32, 32)
 REFERENCE_BG = (240, 240, 240)
 
-PART_CONNECTIONS = {
-    "torso": [(11, 12), (11, 23), (12, 24), (23, 24)],
-    "head": [
-        (0, 1), (1, 2), (2, 3), (3, 7),
-        (0, 4), (4, 5), (5, 6), (6, 8),
-        (9, 10),
-    ],
-    "arms": [
-        (11, 13), (13, 15), (15, 17), (15, 19), (15, 21), (17, 19),
-        (12, 14), (14, 16), (16, 18), (16, 20), (16, 22), (18, 20),
-    ],
-    "legs": [
-        (23, 25), (25, 27), (27, 29), (27, 31), (29, 31),
-        (24, 26), (26, 28), (28, 30), (28, 32), (30, 32),
-    ],
-}
-
-PART_CUES = (
-    ("спин", "torso"),
-    ("корпус", "torso"),
-    ("осанк", "torso"),
-    ("плеч", "torso"),
-    ("груд", "torso"),
-    ("голов", "head"),
-    ("подбород", "head"),
-    ("шея", "head"),
-    ("рук", "arms"),
-    ("локт", "arms"),
-    ("кист", "arms"),
-    ("ног", "legs"),
-    ("колен", "legs"),
-    ("стоп", "legs"),
-    ("бедр", "legs"),
-    ("опорн", "legs"),
-    ("удар", "legs"),
-)
-
 PERSON_LABEL = {"female": "Девушка", "male": "Мужчина"}
-
-
-def highlighted_connections(text: str) -> List[Tuple[int, int]]:
-    """Bones the error text is about. Those are drawn thicker and brighter."""
-    lowered = (text or "").lower()
-    seen = set()
-    chosen: List[Tuple[int, int]] = []
-    for cue, part in PART_CUES:
-        if cue in lowered and part not in seen:
-            seen.add(part)
-            chosen.extend(PART_CONNECTIONS[part])
-    return chosen
 
 
 class VisualizationService:
@@ -114,8 +63,6 @@ class VisualizationService:
         color: Tuple[int, int, int] = RED,
         thickness: int = 2,
         joint_radius: int = 3,
-        highlight: Optional[List[Tuple[int, int]]] = None,
-        highlight_color: Tuple[int, int, int] = ORANGE,
     ) -> np.ndarray:
         """
         Draw a pose skeleton on an image.
@@ -132,8 +79,6 @@ class VisualizationService:
         """
         height, width = image.shape[:2]
         result = image.copy()
-        highlighted = set(highlight or [])
-        highlight_joints = {index for pair in highlighted for index in pair}
 
         for start_idx, end_idx in POSE_CONNECTIONS:
             if start_idx >= len(landmarks) or end_idx >= len(landmarks):
@@ -147,18 +92,13 @@ class VisualizationService:
 
             point_a = (int(start["x"] * width), int(start["y"] * height))
             point_b = (int(end["x"] * width), int(end["y"] * height))
-            marked = (start_idx, end_idx) in highlighted or (end_idx, start_idx) in highlighted
-            bone_color = highlight_color if marked else color
-            bone_thickness = thickness + 3 if marked else thickness
-            cv2.line(result, point_a, point_b, bone_color, bone_thickness, cv2.LINE_AA)
+            cv2.line(result, point_a, point_b, color, thickness, cv2.LINE_AA)
 
-        for index, landmark in enumerate(landmarks):
+        for landmark in landmarks:
             if landmark.get("visibility", 1.0) < VISIBILITY_THRESHOLD:
                 continue
             center = (int(landmark["x"] * width), int(landmark["y"] * height))
-            joint_color = highlight_color if index in highlight_joints else color
-            radius = joint_radius + 2 if index in highlight_joints else joint_radius
-            cv2.circle(result, center, radius, joint_color, -1, cv2.LINE_AA)
+            cv2.circle(result, center, joint_radius, color, -1, cv2.LINE_AA)
 
         return result
 
@@ -258,8 +198,6 @@ class VisualizationService:
                 person=person or None,
                 image=user_frame,
             )
-            focus = highlighted_connections(note)
-
             if user_landmarks:
                 # Arms are left out of the box so a hand on the partner
                 # does not pull him into the close-up.
@@ -275,8 +213,6 @@ class VisualizationService:
                     RED,
                     thickness=thickness,
                     joint_radius=max(3, thickness),
-                    highlight=focus,
-                    highlight_color=ORANGE,
                 )
             elif len(poses) > 1:
                 description = (
@@ -302,8 +238,6 @@ class VisualizationService:
                     GREEN,
                     thickness=max(2, width // 180),
                     joint_radius=max(3, width // 180),
-                    highlight=focus,
-                    highlight_color=YELLOW,
                 )
 
             user_frame = self._with_title(user_frame, label, WHITE, (20, 20, 20))

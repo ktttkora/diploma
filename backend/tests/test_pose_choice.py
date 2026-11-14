@@ -3,7 +3,6 @@
 import numpy as np
 
 from app.services.pose_service import choose_pose, pose_distance, same_dancer
-from app.services.visualization_service import highlighted_connections
 
 
 def body(x: float, y: float, foot_y: float = 0.9):
@@ -116,11 +115,3 @@ def test_identical_poses_are_close_and_a_kick_is_not() -> None:
     kicking[26] = {"x": 0.7, "y": 0.15, "visibility": 1.0}
     assert pose_distance(standing, same) < 0.4
     assert pose_distance(standing, kicking) > 0.4
-
-
-def test_back_and_leg_words_mark_those_bones() -> None:
-    """The words in the error pick the bones drawn in the accent colour."""
-    marked = highlighted_connections("Корпус завален, высокий удар ногой")
-    assert (11, 23) in marked
-    assert (23, 25) in marked
-    assert (11, 13) not in marked
