@@ -16,7 +16,7 @@ from typing import Dict, List, Any, Optional, Tuple
 import tempfile
 
 from app.services.reference_service import reference_service
-from app.services.pose_service import pose_service
+from app.services.pose_service import choose_pose, pose_service
 from app.utils.video_utils import extract_frame
 from app.utils.image_text import draw_text_block, get_font, wrap_text
 from app.services.storage_service import storage_service
@@ -44,11 +44,64 @@ VISIBILITY_THRESHOLD = 0.3
 
 # BGR colours
 RED = (0, 0, 255)
+ORANGE = (0, 140, 255)
 GREEN = (0, 200, 0)
+YELLOW = (0, 220, 255)
 WHITE = (255, 255, 255)
 LIGHT_GREY = (200, 200, 200)
 CAPTION_BG = (32, 32, 32)
 REFERENCE_BG = (240, 240, 240)
+
+PART_CONNECTIONS = {
+    "torso": [(11, 12), (11, 23), (12, 24), (23, 24)],
+    "head": [
+        (0, 1), (1, 2), (2, 3), (3, 7),
+        (0, 4), (4, 5), (5, 6), (6, 8),
+        (9, 10),
+    ],
+    "arms": [
+        (11, 13), (13, 15), (15, 17), (15, 19), (15, 21), (17, 19),
+        (12, 14), (14, 16), (16, 18), (16, 20), (16, 22), (18, 20),
+    ],
+    "legs": [
+        (23, 25), (25, 27), (27, 29), (27, 31), (29, 31),
+        (24, 26), (26, 28), (28, 30), (28, 32), (30, 32),
+    ],
+}
+
+PART_CUES = (
+    ("спин", "torso"),
+    ("корпус", "torso"),
+    ("осанк", "torso"),
+    ("плеч", "torso"),
+    ("груд", "torso"),
+    ("голов", "head"),
+    ("подбород", "head"),
+    ("шея", "head"),
+    ("рук", "arms"),
+    ("локт", "arms"),
+    ("кист", "arms"),
+    ("ног", "legs"),
+    ("колен", "legs"),
+    ("стоп", "legs"),
+    ("бедр", "legs"),
+    ("опорн", "legs"),
+    ("удар", "legs"),
+)
+
+PERSON_LABEL = {"female": "Девушка", "male": "Мужчина"}
+
+
+def highlighted_connections(text: str) -> List[Tuple[int, int]]:
+    """Bones the error text is about. Those are drawn thicker and brighter."""
+    lowered = (text or "").lower()
+    seen = set()
+    chosen: List[Tuple[int, int]] = []
+    for cue, part in PART_CUES:
+        if cue in lowered and part not in seen:
+            seen.add(part)
+            chosen.extend(PART_CONNECTIONS[part])
+    return chosen
 
 
 class VisualizationService:
@@ -60,7 +113,9 @@ class VisualizationService:
         landmarks: List[Dict[str, float]],
         color: Tuple[int, int, int] = RED,
         thickness: int = 2,
-        joint_radius: int = 3
+        joint_radius: int = 3,
+        highlight: Optional[List[Tuple[int, int]]] = None,
+        highlight_color: Tuple[int, int, int] = ORANGE,
     ) -> np.ndarray:
         """
         Draw a pose skeleton on an image.
@@ -77,6 +132,8 @@ class VisualizationService:
         """
         height, width = image.shape[:2]
         result = image.copy()
+        highlighted = set(highlight or [])
+        highlight_joints = {index for pair in highlighted for index in pair}
 
         for start_idx, end_idx in POSE_CONNECTIONS:
             if start_idx >= len(landmarks) or end_idx >= len(landmarks):
@@ -90,65 +147,65 @@ class VisualizationService:
 
             point_a = (int(start["x"] * width), int(start["y"] * height))
             point_b = (int(end["x"] * width), int(end["y"] * height))
-            cv2.line(result, point_a, point_b, color, thickness, cv2.LINE_AA)
+            marked = (start_idx, end_idx) in highlighted or (end_idx, start_idx) in highlighted
+            bone_color = highlight_color if marked else color
+            bone_thickness = thickness + 3 if marked else thickness
+            cv2.line(result, point_a, point_b, bone_color, bone_thickness, cv2.LINE_AA)
 
-        for landmark in landmarks:
+        for index, landmark in enumerate(landmarks):
             if landmark.get("visibility", 1.0) < VISIBILITY_THRESHOLD:
                 continue
             center = (int(landmark["x"] * width), int(landmark["y"] * height))
-            cv2.circle(result, center, joint_radius, color, -1, cv2.LINE_AA)
+            joint_color = highlight_color if index in highlight_joints else color
+            radius = joint_radius + 2 if index in highlight_joints else joint_radius
+            cv2.circle(result, center, radius, joint_color, -1, cv2.LINE_AA)
 
         return result
 
-    def _add_label(self, image: np.ndarray, text: str, color: Tuple[int, int, int]) -> np.ndarray:
-        """
-        Draw a short label in the top-left corner of an image.
-
-        Args:
-            image: OpenCV image in BGR order
-            text: Label text (Latin only, drawn with OpenCV)
-            color: BGR colour
-
-        Returns:
-            New image with the label
-        """
-        result = image.copy()
-        cv2.putText(
-            result, text, (12, 34),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 4, cv2.LINE_AA
+    def _with_title(
+        self,
+        image: np.ndarray,
+        text: str,
+        color: Tuple[int, int, int],
+        background: Tuple[int, int, int],
+    ) -> np.ndarray:
+        """Put a one-line title above the frame so it does not cover the body."""
+        strip = np.full((46, image.shape[1], 3), background, dtype=np.uint8)
+        strip = draw_text_block(
+            strip, [(text, 24, color)], padding=8, background=background
         )
-        cv2.putText(
-            result, text, (12, 34),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2, cv2.LINE_AA
-        )
-        return result
+        return np.vstack([strip, image])
 
-    def _build_caption(self, width: int, timestamp: float, title: str,
-                       recommendation: str) -> np.ndarray:
+    def _build_caption(
+        self,
+        width: int,
+        timestamp: float,
+        title: str,
+        description: str,
+        recommendation: str,
+    ) -> np.ndarray:
         """
         Build the caption bar placed under the frames.
 
-        Args:
-            width: Target width in pixels
-            timestamp: Error timestamp in seconds
-            title: Error title
-            recommendation: Fix suggestion
-
-        Returns:
-            Caption image (BGR)
+        The bar states what is wrong and how to fix it, so the picture is
+        readable without the card text above it.
         """
-        caption_height = 96
-        caption = np.full((caption_height, width, 3), CAPTION_BG, dtype=np.uint8)
+        heading = f"{timestamp:.1f} с — {title}".strip()
+        lines: List[Tuple[str, int, Tuple[int, int, int]]] = [(heading, 26, WHITE)]
 
-        heading = f"{timestamp:.1f}s  {title}".strip()
-
-        lines = [(heading, 22, WHITE)]
+        if description:
+            font = get_font(22)
+            wrapped = wrap_text(description, font, width - 24)[:4]
+            lines.extend((line, 22, WHITE) for line in wrapped)
         if recommendation:
-            font = get_font(18)
-            wrapped = wrap_text(recommendation, font, width - 24)[:2]
-            lines.extend((line, 18, LIGHT_GREY) for line in wrapped)
+            font = get_font(20)
+            wrapped = wrap_text(f"Как исправить: {recommendation}", font, width - 24)[:3]
+            lines.extend((line, 20, LIGHT_GREY) for line in wrapped)
 
-        return draw_text_block(caption, lines, padding=12, line_spacing=6)
+        line_height = 34
+        caption_height = 24 + line_height * len(lines)
+        caption = np.full((caption_height, width, 3), CAPTION_BG, dtype=np.uint8)
+        return draw_text_block(caption, lines, padding=12, line_spacing=8)
 
     def create_error_screenshot(
         self,
@@ -186,74 +243,169 @@ class VisualizationService:
             if user_frame is None:
                 raise RuntimeError("Failed to load the extracted frame")
 
-            # Detect the pose on this single frame. Scanning the whole video
-            # here would repeat that work for every error.
-            user_landmarks = pose_service.detect_pose_on_image(user_frame)
+            title = str(error_data.get("title", "Ошибка"))
+            description = str(error_data.get("description", ""))
+            recommendation = str(error_data.get("recommendation", ""))
+            note = f"{title}. {description}"
+            person = str(error_data.get("person") or "")
+            label = PERSON_LABEL.get(person, "Поза")
+            poses = pose_service.detect_poses_on_image(user_frame)
+            user_landmarks = choose_pose(
+                poses,
+                error_data.get("anchor_x"),
+                error_data.get("anchor_y"),
+                note,
+                person=person or None,
+            )
+            focus = highlighted_connections(note)
 
             if user_landmarks:
-                user_frame = self.draw_skeleton(user_frame, user_landmarks, RED)
-            user_frame = self._add_label(user_frame, "YOUR POSE", RED)
+                # Arms are left out of the box so a hand on the partner
+                # does not pull him into the close-up.
+                user_frame, user_landmarks = self._crop_to_pose(
+                    user_frame,
+                    user_landmarks,
+                    indices=tuple(range(0, 13)) + tuple(range(23, 33)),
+                )
+                thickness = max(2, user_frame.shape[1] // 180)
+                user_frame = self.draw_skeleton(
+                    user_frame,
+                    user_landmarks,
+                    RED,
+                    thickness=thickness,
+                    joint_radius=max(3, thickness),
+                    highlight=focus,
+                    highlight_color=ORANGE,
+                )
+            elif len(poses) > 1:
+                description = (
+                    "В кадре несколько человек, и скелет не нарисован, "
+                    "чтобы не обвести не того. " + description
+                ).strip()
 
-            reference_landmarks = self._find_reference_pose(
-                detected_element, timestamp
-            )
+            reference_landmarks = None
+            if user_landmarks:
+                reference_landmarks = self._find_reference_pose(
+                    detected_element, user_landmarks
+                )
 
+            reference_frame = None
             if reference_landmarks:
                 height, width = user_frame.shape[:2]
                 reference_frame = np.full(
                     (height, width, 3), REFERENCE_BG, dtype=np.uint8
                 )
                 reference_frame = self.draw_skeleton(
-                    reference_frame, reference_landmarks, GREEN
+                    reference_frame,
+                    reference_landmarks,
+                    GREEN,
+                    thickness=max(2, width // 180),
+                    joint_radius=max(3, width // 180),
+                    highlight=focus,
+                    highlight_color=YELLOW,
                 )
-                reference_frame = self._add_label(
-                    reference_frame, "REFERENCE", GREEN
+
+            user_frame = self._with_title(user_frame, label, WHITE, (20, 20, 20))
+            if reference_frame is not None:
+                reference_frame = self._with_title(
+                    reference_frame, "Эталон", (0, 90, 0), (255, 255, 255)
                 )
-                composite = np.hstack([user_frame, reference_frame])
+                pair = np.hstack([user_frame, reference_frame])
+                caption = self._build_caption(
+                    pair.shape[1], timestamp, title, description, recommendation
+                )
+                final = np.vstack([pair, caption])
             else:
-                composite = user_frame
-
-            caption = self._build_caption(
-                composite.shape[1],
-                timestamp,
-                str(error_data.get("title", "Ошибка")),
-                str(error_data.get("recommendation", ""))
-            )
-
-            final = np.vstack([composite, caption])
+                caption = self._build_caption(
+                    640, timestamp, title, description, recommendation
+                )
+                # The explanation sits beside the close-up, not in a thin
+                # strip under a wide empty frame.
+                if caption.shape[0] < user_frame.shape[0]:
+                    extra = user_frame.shape[0] - caption.shape[0]
+                    caption = cv2.copyMakeBorder(
+                        caption, 0, extra, 0, 0, cv2.BORDER_CONSTANT, value=CAPTION_BG
+                    )
+                elif caption.shape[0] > user_frame.shape[0]:
+                    extra = caption.shape[0] - user_frame.shape[0]
+                    user_frame = cv2.copyMakeBorder(
+                        user_frame, 0, extra, 0, 0, cv2.BORDER_CONSTANT, value=(20, 20, 20)
+                    )
+                final = np.hstack([user_frame, caption])
 
             return self._save(final, error_data)
 
         finally:
             Path(user_frame_path).unlink(missing_ok=True)
 
+    def _crop_to_pose(
+        self,
+        image: np.ndarray,
+        landmarks: List[Dict[str, float]],
+        pad_ratio: float = 0.35,
+        indices: Optional[Tuple[int, ...]] = None,
+    ) -> Tuple[np.ndarray, List[Dict[str, float]]]:
+        """
+        Cut the frame down to the chosen dancer and rescale landmarks to it.
+
+        A full-room frame makes the fault hard to see. The crop keeps the
+        whole body, including a raised leg.
+        """
+        height, width = image.shape[:2]
+        xs = []
+        ys = []
+        allowed = set(indices) if indices is not None else None
+        for index, landmark in enumerate(landmarks):
+            if allowed is not None and index not in allowed:
+                continue
+            if landmark.get("visibility", 1.0) < VISIBILITY_THRESHOLD:
+                continue
+            xs.append(float(landmark["x"]))
+            ys.append(float(landmark["y"]))
+        if not xs or not ys:
+            return image, landmarks
+
+        x0 = max(0.0, min(xs) - pad_ratio * (max(xs) - min(xs) + 0.05))
+        x1 = min(1.0, max(xs) + pad_ratio * (max(xs) - min(xs) + 0.05))
+        y0 = max(0.0, min(ys) - pad_ratio * (max(ys) - min(ys) + 0.05))
+        y1 = min(1.0, max(ys) + pad_ratio * (max(ys) - min(ys) + 0.05))
+        left, right = int(x0 * width), max(int(x1 * width), int(x0 * width) + 2)
+        top, bottom = int(y0 * height), max(int(y1 * height), int(y0 * height) + 2)
+        right = min(right, width)
+        bottom = min(bottom, height)
+        crop_w = right - left
+        crop_h = bottom - top
+        if crop_w < 2 or crop_h < 2:
+            return image, landmarks
+
+        cropped = image[top:bottom, left:right]
+        rescaled = []
+        for landmark in landmarks:
+            rescaled.append({
+                **landmark,
+                "x": (float(landmark["x"]) * width - left) / crop_w,
+                "y": (float(landmark["y"]) * height - top) / crop_h,
+            })
+        return cropped, rescaled
+
     def _find_reference_pose(
         self,
         detected_element: Optional[str],
-        timestamp: float
+        landmarks: List[Dict[str, float]],
     ) -> Optional[List[Dict[str, float]]]:
         """
-        Look up the reference pose for an element at a timestamp.
+        Look up a reference pose with a similar shape.
 
-        Args:
-            detected_element: Detected dance element name
-            timestamp: Error timestamp in seconds
-
-        Returns:
-            Reference landmarks, or None when no reference is available
+        Returns None when the element is unknown or the closest catalog pose
+        is a different movement.
         """
-        if not detected_element:
+        if not detected_element or not landmarks:
             return None
 
         try:
-            pose = reference_service.find_similar_pose(detected_element, timestamp)
+            return reference_service.find_pose_like(detected_element, landmarks)
         except Exception:
             return None
-
-        if not pose:
-            return None
-
-        return pose.get("landmarks") or None
 
     def _save(self, image: np.ndarray, error_data: Dict[str, Any]) -> str:
         """

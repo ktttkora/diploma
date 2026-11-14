@@ -7,9 +7,196 @@ Extracts body landmarks, detects steps, and calculates joint angles.
 import cv2
 import mediapipe as mp
 import numpy as np
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 
 mp_pose = mp.solutions.pose
+
+# Torso and feet used to tell two dancers apart. Arms are left out of the
+# mask so an extended hand does not hide the partner.
+TORSO_LANDMARKS = (11, 12, 23, 24)
+FOOT_LANDMARKS = (27, 28, 29, 30, 31, 32)
+MASK_LANDMARKS = tuple(range(0, 13)) + tuple(range(23, 33))
+COMPARE_LANDMARKS = (11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28)
+
+
+def torso_center(landmarks: List[Dict[str, float]]) -> Optional[Tuple[float, float]]:
+    """Return the mean of the visible shoulders and hips, or None."""
+    points = []
+    for index in TORSO_LANDMARKS:
+        if index >= len(landmarks):
+            continue
+        landmark = landmarks[index]
+        if landmark.get("visibility", 1.0) < 0.3:
+            continue
+        points.append((float(landmark["x"]), float(landmark["y"])))
+    if len(points) < 2:
+        return None
+    return (
+        sum(point[0] for point in points) / len(points),
+        sum(point[1] for point in points) / len(points),
+    )
+
+
+def raised_foot(landmarks: List[Dict[str, float]]) -> Optional[float]:
+    """Return the highest visible foot y. Smaller means higher in the frame."""
+    heights = []
+    for index in FOOT_LANDMARKS:
+        if index >= len(landmarks):
+            continue
+        landmark = landmarks[index]
+        if landmark.get("visibility", 1.0) < 0.3:
+            continue
+        heights.append(float(landmark["y"]))
+    if not heights:
+        return None
+    return min(heights)
+
+
+def leg_lift(landmarks: List[Dict[str, float]]) -> Optional[float]:
+    """How far the higher knee sits above the hips. Positive means a raised leg."""
+    hips = []
+    knees = []
+    for index in (23, 24):
+        if index < len(landmarks) and landmarks[index].get("visibility", 1.0) >= 0.3:
+            hips.append(float(landmarks[index]["y"]))
+    for index in (25, 26):
+        if index < len(landmarks) and landmarks[index].get("visibility", 1.0) >= 0.3:
+            knees.append(float(landmarks[index]["y"]))
+    if not hips or not knees:
+        return None
+    hip_y = sum(hips) / len(hips)
+    return hip_y - min(knees)
+
+
+def mentions_raised_leg(text: str) -> bool:
+    """Whether the error text describes a kick or a lifted leg."""
+    lowered = (text or "").lower()
+    if "удар" in lowered or "мах" in lowered:
+        return True
+    return "ног" in lowered and any(
+        word in lowered for word in ("высок", "поднят", "вверх")
+    )
+
+
+def choose_pose(
+    poses: List[List[Dict[str, float]]],
+    anchor_x: Optional[float] = None,
+    anchor_y: Optional[float] = None,
+    text: str = "",
+    person: Optional[str] = None,
+) -> Optional[List[Dict[str, float]]]:
+    """
+    Pick the dancer the error is about.
+
+    An anchor is the chest point from the vision model. Without one, a kick
+    description selects the pose with the higher foot. If the model did not
+    mark a point, the woman is the dancer MediaPipe did not lock onto first,
+    and the man is the prominent one.
+    """
+    if not poses:
+        return None
+
+    if anchor_x is not None and anchor_y is not None:
+        ranked = []
+        for pose in poses:
+            center = torso_center(pose)
+            if center is None:
+                continue
+            distance = ((center[0] - anchor_x) ** 2 + (center[1] - anchor_y) ** 2) ** 0.5
+            ranked.append((distance, pose))
+        if not ranked:
+            return None
+        ranked.sort(key=lambda item: item[0])
+        if ranked[0][0] > 0.45:
+            return None
+        return ranked[0][1]
+
+    if mentions_raised_leg(text):
+        feet = []
+        for pose in poses:
+            height = raised_foot(pose)
+            if height is not None:
+                feet.append((height, pose))
+        feet.sort(key=lambda item: item[0])
+        if len(feet) >= 2 and feet[1][0] - feet[0][0] >= 0.08:
+            return feet[0][1]
+        lifts = []
+        for pose in poses:
+            lift = leg_lift(pose)
+            if lift is not None:
+                lifts.append((lift, pose))
+        lifts.sort(key=lambda item: item[0], reverse=True)
+        if len(lifts) >= 2 and lifts[0][0] - lifts[1][0] >= 0.08:
+            return lifts[0][1]
+        if len(feet) == 1 and feet[0][0] < 0.55:
+            return feet[0][1]
+        if len(poses) == 1:
+            return None
+
+    if len(poses) == 1:
+        return poses[0]
+    # No anchor. MediaPipe's first body is the prominent dancer, which in a
+    # couple is often the partner we were not asked to critique.
+    if person == "female":
+        return poses[-1]
+    if person == "male":
+        return poses[0]
+    return poses[0]
+
+
+def pose_distance(
+    left: List[Dict[str, float]],
+    right: List[Dict[str, float]],
+) -> Optional[float]:
+    """
+    Compare two poses after centering on the hips and scaling by the torso.
+
+    Returns the root-mean-square joint distance in torso lengths, or None
+    when too few joints are visible to compare.
+    """
+    def points(landmarks: List[Dict[str, float]]) -> Dict[int, Tuple[float, float]]:
+        found = {}
+        for index in COMPARE_LANDMARKS:
+            if index >= len(landmarks):
+                continue
+            landmark = landmarks[index]
+            if landmark.get("visibility", 1.0) < 0.3:
+                continue
+            found[index] = (float(landmark["x"]), float(landmark["y"]))
+        return found
+
+    def frame(joints: Dict[int, Tuple[float, float]]):
+        hips = [joints[index] for index in (23, 24) if index in joints]
+        shoulders = [joints[index] for index in (11, 12) if index in joints]
+        if not hips or not shoulders:
+            return None
+        hip_x = sum(point[0] for point in hips) / len(hips)
+        hip_y = sum(point[1] for point in hips) / len(hips)
+        shoulder_x = sum(point[0] for point in shoulders) / len(shoulders)
+        shoulder_y = sum(point[1] for point in shoulders) / len(shoulders)
+        scale = ((shoulder_x - hip_x) ** 2 + (shoulder_y - hip_y) ** 2) ** 0.5
+        if scale < 1e-3:
+            return None
+        return hip_x, hip_y, scale
+
+    left_points = points(left)
+    right_points = points(right)
+    shared = [index for index in COMPARE_LANDMARKS if index in left_points and index in right_points]
+    if len(shared) < 6:
+        return None
+    left_frame = frame(left_points)
+    right_frame = frame(right_points)
+    if left_frame is None or right_frame is None:
+        return None
+
+    total = 0.0
+    for index in shared:
+        lx = (left_points[index][0] - left_frame[0]) / left_frame[2]
+        ly = (left_points[index][1] - left_frame[1]) / left_frame[2]
+        rx = (right_points[index][0] - right_frame[0]) / right_frame[2]
+        ry = (right_points[index][1] - right_frame[1]) / right_frame[2]
+        total += (lx - rx) ** 2 + (ly - ry) ** 2
+    return (total / len(shared)) ** 0.5
 
 
 class PoseService:
@@ -241,12 +428,34 @@ class PoseService:
 
         return steps
 
+    def _detect_raw(
+        self,
+        image: np.ndarray,
+        min_detection: float,
+    ) -> Optional[List[Dict[str, float]]]:
+        """Run one static MediaPipe pass. Coordinates stay in this image."""
+        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        with mp_pose.Pose(
+            static_image_mode=True,
+            model_complexity=1,
+            min_detection_confidence=min_detection,
+        ) as pose:
+            result = pose.process(image_rgb)
+            if not result.pose_landmarks:
+                return None
+            return [
+                {
+                    "x": float(lm.x),
+                    "y": float(lm.y),
+                    "z": float(lm.z),
+                    "visibility": float(lm.visibility),
+                }
+                for lm in result.pose_landmarks.landmark
+            ]
+
     def detect_pose_on_image(self, image: np.ndarray) -> Optional[List[Dict[str, float]]]:
         """
-        Detect a pose on a single image.
-
-        Used when only one moment matters (for example drawing a skeleton
-        on an error screenshot). Far cheaper than scanning a whole video.
+        Detect the most prominent pose on a single image.
 
         Args:
             image: OpenCV image in BGR order
@@ -256,28 +465,141 @@ class PoseService:
         """
         if image is None or image.size == 0:
             return None
+        return self._detect_raw(image, self.min_detection)
 
-        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    def detect_poses_on_image(
+        self,
+        image: np.ndarray,
+        max_people: int = 3,
+    ) -> List[List[Dict[str, float]]]:
+        """
+        Detect up to max_people poses.
 
-        with mp_pose.Pose(
-            static_image_mode=True,
-            model_complexity=1,
-            min_detection_confidence=self.min_detection
-        ) as pose:
-            result = pose.process(image_rgb)
+        MediaPipe's pose solution returns one body, usually the larger one.
+        Each found body is masked and the search repeats so the partner is
+        not skipped.
+        """
+        if image is None or image.size == 0:
+            return []
 
-            if not result.pose_landmarks:
-                return None
+        height, width = image.shape[:2]
+        found: List[List[Dict[str, float]]] = []
+        blocked = np.zeros((height, width), dtype=np.uint8)
 
-            return [
-                {
-                    "x": float(lm.x),
-                    "y": float(lm.y),
-                    "z": float(lm.z),
-                    "visibility": float(lm.visibility)
-                }
-                for lm in result.pose_landmarks.landmark
-            ]
+        for _ in range(max_people):
+            working = image.copy()
+            working[blocked > 0] = (40, 40, 40)
+            landmarks = self._detect_raw(working, 0.35)
+            if not landmarks:
+                break
+            center = torso_center(landmarks)
+            if center is None:
+                break
+            cx = min(max(int(center[0] * width), 0), width - 1)
+            cy = min(max(int(center[1] * height), 0), height - 1)
+            if blocked[cy, cx]:
+                break
+            if any(self._same_person(landmarks, previous) for previous in found):
+                break
+            found.append(landmarks)
+            self._paint_mask(blocked, landmarks)
+
+        return [self._refine_pose(image, pose) for pose in found]
+
+    def _refine_pose(
+        self,
+        image: np.ndarray,
+        landmarks: List[Dict[str, float]],
+    ) -> List[Dict[str, float]]:
+        """
+        Re-detect one dancer inside a crop.
+
+        The second pass on a masked full frame often bends a raised leg.
+        A crop where that dancer fills the picture gives a cleaner skeleton.
+        """
+        height, width = image.shape[:2]
+        center = torso_center(landmarks)
+        if center is None:
+            return landmarks
+
+        xs = [float(lm["x"]) for lm in landmarks if lm.get("visibility", 1.0) >= 0.3]
+        ys = [float(lm["y"]) for lm in landmarks if lm.get("visibility", 1.0) >= 0.3]
+        if not xs or not ys:
+            return landmarks
+
+        span_x = max(max(xs) - min(xs), 0.18)
+        span_y = max(max(ys) - min(ys), 0.35)
+        x0 = max(0.0, center[0] - span_x * 0.75)
+        x1 = min(1.0, center[0] + span_x * 0.75)
+        y0 = max(0.0, min(ys) - span_y * 0.15)
+        y1 = min(1.0, max(ys) + span_y * 0.2)
+        left, right = int(x0 * width), int(x1 * width)
+        top, bottom = int(y0 * height), int(y1 * height)
+        if right - left < 40 or bottom - top < 40:
+            return landmarks
+
+        refined = self._detect_raw(image[top:bottom, left:right], 0.35)
+        if not refined:
+            return landmarks
+
+        crop_w = right - left
+        crop_h = bottom - top
+        mapped = []
+        for landmark in refined:
+            mapped.append({
+                **landmark,
+                "x": (float(landmark["x"]) * crop_w + left) / width,
+                "y": (float(landmark["y"]) * crop_h + top) / height,
+            })
+        refined_center = torso_center(mapped)
+        if refined_center is None:
+            return landmarks
+        shift = (
+            (refined_center[0] - center[0]) ** 2
+            + (refined_center[1] - center[1]) ** 2
+        ) ** 0.5
+        if shift > 0.18:
+            return landmarks
+        return mapped
+
+    def _same_person(
+        self,
+        left: List[Dict[str, float]],
+        right: List[Dict[str, float]],
+    ) -> bool:
+        """Whether two detections are the same dancer seen again."""
+        left_center = torso_center(left)
+        right_center = torso_center(right)
+        if left_center is None or right_center is None:
+            return False
+        distance = (
+            (left_center[0] - right_center[0]) ** 2
+            + (left_center[1] - right_center[1]) ** 2
+        ) ** 0.5
+        return distance < 0.1
+
+    def _paint_mask(self, mask: np.ndarray, landmarks: List[Dict[str, float]]) -> None:
+        """Mark a dancer's torso, head and legs so the next pass skips them."""
+        height, width = mask.shape[:2]
+        points = []
+        for index in MASK_LANDMARKS:
+            if index >= len(landmarks):
+                continue
+            landmark = landmarks[index]
+            if landmark.get("visibility", 1.0) < 0.3:
+                continue
+            points.append([
+                int(float(landmark["x"]) * width),
+                int(float(landmark["y"]) * height),
+            ])
+        if len(points) < 3:
+            return
+        hull = cv2.convexHull(np.array(points, dtype=np.int32))
+        person = np.zeros_like(mask)
+        cv2.fillConvexPoly(person, hull, 255)
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (21, 21))
+        person = cv2.dilate(person, kernel)
+        mask[person > 0] = 255
 
     def find_pose_at(
         self,

@@ -454,6 +454,39 @@ class ReferenceService:
         closest = min(poses, key=lambda p: abs(p["timestamp"] - target_timestamp))
         return closest
 
+    def find_pose_like(
+        self,
+        element_name: str,
+        landmarks: List[Dict[str, Any]],
+        max_distance: float = 0.4,
+    ) -> Optional[List[Dict[str, Any]]]:
+        """
+        Find the reference pose whose shape is close to the dancer's pose.
+
+        Matching by the user's timestamp pulls an unrelated moment from the
+        element clip. A standing reference next to a kick does not explain
+        the mistake, so a poor match returns None.
+        """
+        from app.services.pose_service import pose_distance
+
+        reference = self.get_reference(element_name)
+        if not reference or not reference.get("poses") or not landmarks:
+            return None
+
+        poses = reference["poses"]
+        step = max(1, len(poses) // 500)
+        best_landmarks = None
+        best_distance = max_distance
+        for pose in poses[::step]:
+            candidate = pose.get("landmarks")
+            if not candidate:
+                continue
+            distance = pose_distance(landmarks, candidate)
+            if distance is not None and distance < best_distance:
+                best_distance = distance
+                best_landmarks = candidate
+        return best_landmarks
+
     def get_reference_frame_at_ratio(
         self,
         element_name: str,

@@ -54,7 +54,9 @@ ANALYSIS_PROMPT = """Ты - эксперт по технике танца хас
       "description": "На 12.5с спина согнута, плечи опущены вперёд",
       "recommendation": "Держите спину прямо, сведите лопатки, поднимите подбородок",
       "detected_element": "Американка",
-      "person": "female"
+      "person": "female",
+      "anchor_x": 0.62,
+      "anchor_y": 0.45
     }}
   ]
 }}
@@ -63,6 +65,7 @@ timestamp - время ошибки в СЕКУНДАХ от начала вид
 Категории ошибок: posture, technique, musicality
 Серьёзность: low, medium, high, critical
 person: female, male
+anchor_x и anchor_y — центр груди того человека, чья это ошибка, в долях кадра от 0 до 1 (0 — левый или верхний край). Точку ставь на него, не на партнёра: по ней на скриншоте рисуется скелет.
 
 Отвечай ТОЛЬКО JSON, без дополнительного текста."""
 
@@ -87,7 +90,8 @@ _PARTNER_APPEARANCE = (
     "Партнёров различай по внешности в кадрах (одежда, фигура, роль в паре), "
     "а не по красному скелету. Локальный ритм и красный скелет могут "
     "принадлежать тому человеку, на которого зафиксировался MediaPipe. "
-    "Оценивай запрошенного человека по кадрам и не приписывай ошибку другому."
+    "Оценивай запрошенного человека по кадрам и не приписывай ошибку другому. "
+    "anchor_x и anchor_y ставь на центр груди этого человека."
 )
 
 SUBJECT_PROMPTS = {
@@ -105,6 +109,17 @@ SUBJECT_PROMPTS = {
         "Не смешивай ошибки двух людей в одну. " + _PARTNER_APPEARANCE
     ),
 }
+
+
+def _unit_coordinate(value: Any) -> Optional[float]:
+    """Clamp a frame coordinate to 0..1, or return None when it is missing."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number != number:
+        return None
+    return max(0.0, min(1.0, number))
 
 
 def accepted_person(raw: Any, subject: str) -> Optional[str]:
@@ -627,6 +642,12 @@ class ClaudeService:
             if person is None:
                 continue
 
+            anchor_x = _unit_coordinate(raw.get("anchor_x"))
+            anchor_y = _unit_coordinate(raw.get("anchor_y"))
+            if anchor_x is None or anchor_y is None:
+                anchor_x = None
+                anchor_y = None
+
             errors.append({
                 "timestamp": timestamp,
                 "category": category if category in VALID_CATEGORIES else "technique",
@@ -636,6 +657,8 @@ class ClaudeService:
                 "recommendation": str(raw.get("recommendation", "")).strip(),
                 "detected_element": raw.get("detected_element") or None,
                 "person": person,
+                "anchor_x": anchor_x,
+                "anchor_y": anchor_y,
             })
 
         detected = parsed.get("detected_elements") or []

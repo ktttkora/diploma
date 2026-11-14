@@ -82,6 +82,8 @@ def _merge_errors(
             "recommendation": err.get("recommendation", ""),
             "detected_element": err.get("detected_element"),
             "person": err.get("person") or None,
+            "anchor_x": err.get("anchor_x"),
+            "anchor_y": err.get("anchor_y"),
         })
 
     for err in ai_errors:
@@ -94,6 +96,8 @@ def _merge_errors(
             "recommendation": err.get("recommendation", ""),
             "detected_element": err.get("detected_element"),
             "person": err.get("person") or None,
+            "anchor_x": err.get("anchor_x"),
+            "anchor_y": err.get("anchor_y"),
         })
 
     merged.sort(key=lambda e: (
@@ -238,9 +242,13 @@ def process_video_task(self, video_id: int, analysis_id: int) -> Dict[str, Any]:
                     err["timestamp"],
                     {
                         "title": err["title"],
+                        "description": err.get("description", ""),
                         "recommendation": err["recommendation"],
                         "analysis_id": analysis_id,
-                        "error_id": error_record.id
+                        "error_id": error_record.id,
+                        "person": err.get("person"),
+                        "anchor_x": err.get("anchor_x"),
+                        "anchor_y": err.get("anchor_y"),
                     },
                     detected_element=err.get("detected_element")
                 )
