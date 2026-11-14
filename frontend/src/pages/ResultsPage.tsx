@@ -28,7 +28,7 @@ import { AxiosError } from 'axios';
 import Header from '../components/Header';
 import analysisService from '../services/analysisService';
 import ScoresSummary from '../components/ScoresSummary';
-import ErrorsList from '../components/ErrorsList';
+import ErrorsList, { PersonFilter } from '../components/ErrorsList';
 import VideoPlayer, { VideoPlayerHandle } from '../components/VideoPlayer';
 import type { Analysis, ApiError } from '../types';
 import { SUBJECT_LABEL } from '../types';
@@ -46,6 +46,7 @@ export default function ResultsPage() {
   const [saving, setSaving] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [toast, setToast] = useState('');
+  const [personFilter, setPersonFilter] = useState<PersonFilter>('all');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -70,6 +71,7 @@ export default function ResultsPage() {
   }, [id]);
 
   useEffect(() => {
+    setPersonFilter('all');
     if (Number.isFinite(id)) {
       void load();
     }
@@ -147,6 +149,10 @@ export default function ResultsPage() {
   }
 
   const errors = analysis.errors ?? [];
+  const videoErrors =
+    personFilter === 'all'
+      ? errors
+      : errors.filter((error) => error.person === personFilter);
 
   return (
     <>
@@ -180,7 +186,7 @@ export default function ResultsPage() {
               <VideoPlayer
                 ref={playerRef}
                 videoId={analysis.video_id}
-                errors={errors}
+                errors={videoErrors}
               />
 
               <Box sx={{ mt: 3 }}>
@@ -188,6 +194,9 @@ export default function ResultsPage() {
                   errors={errors}
                   analysisId={analysis.id}
                   onSeek={seekTo}
+                  subject={analysis.subject}
+                  personFilter={personFilter}
+                  onPersonFilterChange={setPersonFilter}
                 />
               </Box>
             </Box>
