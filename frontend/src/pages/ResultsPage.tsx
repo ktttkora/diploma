@@ -31,6 +31,7 @@ import ScoresSummary from '../components/ScoresSummary';
 import ErrorsList from '../components/ErrorsList';
 import VideoPlayer, { VideoPlayerHandle } from '../components/VideoPlayer';
 import type { Analysis, ApiError } from '../types';
+import { SUBJECT_LABEL } from '../types';
 
 export default function ResultsPage() {
   const { analysisId } = useParams<{ analysisId: string }>();
@@ -156,6 +157,11 @@ export default function ResultsPage() {
           <Typography variant="h4" gutterBottom>
             Результат анализа
           </Typography>
+          {analysis.subject ? (
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Кого разбирали: {SUBJECT_LABEL[analysis.subject]}
+            </Typography>
+          ) : null}
 
           {analysis.error_message ? (
             <Alert severity="warning" sx={{ mb: 3 }}>

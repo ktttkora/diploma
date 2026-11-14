@@ -15,6 +15,7 @@ class AnalysisResponse(BaseModel):
     id: int
     video_id: int
     status: AnalysisStatus
+    subject: str
     overall_score: Optional[float] = None
     rhythm_score: Optional[float] = None
     posture_score: Optional[float] = None
@@ -58,6 +59,7 @@ class AnalysisDetailResponse(BaseModel):
     id: int
     video_id: int
     status: AnalysisStatus
+    subject: str
     overall_score: Optional[float] = None
     rhythm_score: Optional[float] = None
     posture_score: Optional[float] = None

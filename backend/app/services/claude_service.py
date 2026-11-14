@@ -31,7 +31,7 @@ ANALYSIS_PROMPT = """Ты - эксперт по технике танца хас
 {images_section}
 ДАННЫЕ О РИТМЕ (локальный анализ):
 {rhythm_data}
-{elements_section}
+{subject_section}{elements_section}
 ЗАДАЧА:
 1. {elements_task}
 2. Оцени ПОСТУРУ: положение спины, плеч, рук, головы (0-100)
@@ -53,7 +53,8 @@ ANALYSIS_PROMPT = """Ты - эксперт по технике танца хас
       "title": "Сутулая спина",
       "description": "На 12.5с спина согнута, плечи опущены вперёд",
       "recommendation": "Держите спину прямо, сведите лопатки, поднимите подбородок",
-      "detected_element": "Американка"
+      "detected_element": "Американка",
+      "person": "female"
     }}
   ]
 }}
@@ -61,6 +62,7 @@ ANALYSIS_PROMPT = """Ты - эксперт по технике танца хас
 timestamp - время ошибки в СЕКУНДАХ от начала видео: бери t кадра, на котором видна ошибка. Не пиши номер изображения.
 Категории ошибок: posture, technique, musicality
 Серьёзность: low, medium, high, critical
+person: female, male
 
 Отвечай ТОЛЬКО JSON, без дополнительного текста."""
 
@@ -78,6 +80,53 @@ CATALOG_ELEMENTS_TASK = (
 
 VALID_CATEGORIES = {"posture", "technique", "musicality"}
 VALID_SEVERITIES = {"low", "medium", "high", "critical"}
+VALID_SUBJECTS = {"female", "male", "both"}
+VALID_PERSONS = {"female", "male"}
+
+_PARTNER_APPEARANCE = (
+    "Партнёров различай по внешности в кадрах (одежда, фигура, роль в паре), "
+    "а не по красному скелету. Локальный ритм и красный скелет могут "
+    "принадлежать тому человеку, на которого зафиксировался MediaPipe. "
+    "Оценивай запрошенного человека по кадрам и не приписывай ошибку другому."
+)
+
+SUBJECT_PROMPTS = {
+    "female": (
+        "В кадре пара. Разбирай ТОЛЬКО девушку. Ошибки мужчины не включай. "
+        'У каждой ошибки person = "female". ' + _PARTNER_APPEARANCE
+    ),
+    "male": (
+        "В кадре пара. Разбирай ТОЛЬКО мужчину. Ошибки девушки не включай. "
+        'У каждой ошибки person = "male". ' + _PARTNER_APPEARANCE
+    ),
+    "both": (
+        "В кадре пара. Разбирай обоих. "
+        'У каждой ошибки person = "female" или "male". '
+        "Не смешивай ошибки двух людей в одну. " + _PARTNER_APPEARANCE
+    ),
+}
+
+
+def accepted_person(raw: Any, subject: str) -> Optional[str]:
+    """
+    Keep a partner tag that matches the requested subject.
+
+    Args:
+        raw: person value from the model
+        subject: female, male, or both
+
+    Returns:
+        female or male, or None when the error must be dropped.
+        both keeps only female or male. A single-person choice drops
+        only the other partner and tags a missing or unknown person as that choice.
+    """
+    person = str(raw or "").strip().lower()
+    if subject == "female":
+        return None if person == "male" else "female"
+    if subject == "male":
+        return None if person == "female" else "male"
+    return person if person in VALID_PERSONS else None
+
 
 # Shown to the user when AI analysis is unavailable
 PLACEHOLDER_KEY_MARKER = "your-key-here"
@@ -386,7 +435,8 @@ class ClaudeService:
         user_poses: Optional[List[Dict[str, Any]]] = None,
         user_aspect: Optional[float] = None,
         frame_timestamps: Optional[List[Optional[float]]] = None,
-        duration: Optional[float] = None
+        duration: Optional[float] = None,
+        subject: str = "both"
     ) -> Dict[str, Any]:
         """
         Analyze dance video frames with the AI model.
@@ -405,6 +455,8 @@ class ClaudeService:
             frame_timestamps: Video time of each frame in seconds; parsed
                 from key frame file names when omitted
             duration: Video duration in seconds, used to clamp error timestamps
+            subject: Who to critique (female, male, or both). Omitted calls
+                use both so older callers keep working
 
         Returns:
             Dict with detected_elements, posture_score, technique_score,
@@ -416,6 +468,11 @@ class ClaudeService:
         """
         if not self.is_configured:
             raise ClaudeUnavailableError("AI analysis is not configured")
+
+        if not isinstance(subject, str) or subject.strip().lower() not in VALID_SUBJECTS:
+            subject = "both"
+        else:
+            subject = subject.strip().lower()
 
         max_images = max(1, settings.AI_MAX_IMAGES)
         frames = frame_paths[:min(self.max_frames, max_images)]
@@ -440,6 +497,7 @@ class ClaudeService:
         prompt = ANALYSIS_PROMPT.format(
             images_section=self._build_frames_section(frame_timestamps) + images_section,
             rhythm_data=self._build_rhythm_summary(rhythm_errors, tempo),
+            subject_section="\nКОГО РАЗБИРАТЬ:\n" + SUBJECT_PROMPTS[subject] + "\n",
             elements_section=elements_section,
             elements_task=elements_task,
         )
@@ -462,7 +520,7 @@ class ClaudeService:
                 f"Failed to parse AI response as JSON: {exc}"
             ) from exc
 
-        return self._match_elements(self._normalize(parsed, duration), catalog)
+        return self._match_elements(self._normalize(parsed, duration, subject), catalog)
 
     @staticmethod
     def media_type(frame_path: str) -> str:
@@ -524,7 +582,8 @@ class ClaudeService:
     def _normalize(
         self,
         parsed: Dict[str, Any],
-        duration: Optional[float] = None
+        duration: Optional[float] = None,
+        subject: str = "both"
     ) -> Dict[str, Any]:
         """
         Coerce a parsed AI response into the expected shape.
@@ -536,6 +595,8 @@ class ClaudeService:
             parsed: Raw parsed JSON from the model
             duration: Video duration in seconds; timestamps are clamped
                 to [0, duration] when it is known
+            subject: female, male, or both. both drops a missing person.
+                A single-person choice drops only the other partner.
 
         Returns:
             Normalized analysis dict
@@ -562,6 +623,10 @@ class ClaudeService:
             if duration and duration > 0:
                 timestamp = min(timestamp, float(duration))
 
+            person = accepted_person(raw.get("person"), subject)
+            if person is None:
+                continue
+
             errors.append({
                 "timestamp": timestamp,
                 "category": category if category in VALID_CATEGORIES else "technique",
@@ -570,6 +635,7 @@ class ClaudeService:
                 "description": str(raw.get("description", "")).strip(),
                 "recommendation": str(raw.get("recommendation", "")).strip(),
                 "detected_element": raw.get("detected_element") or None,
+                "person": person,
             })
 
         detected = parsed.get("detected_elements") or []

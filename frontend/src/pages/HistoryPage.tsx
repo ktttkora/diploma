@@ -36,6 +36,7 @@ import Header from '../components/Header';
 import analysisService from '../services/analysisService';
 import videoService from '../services/videoService';
 import type { Analysis, ApiError } from '../types';
+import { SUBJECT_LABEL } from '../types';
 
 const PAGE_SIZE = 10;
 
@@ -225,6 +226,7 @@ export default function HistoryPage() {
                           <Box>
                             <Typography variant="body2">
                               {analysis.filename || `Видео #${analysis.video_id}`}
+                              {analysis.subject ? ` · ${SUBJECT_LABEL[analysis.subject]}` : ''}
                             </Typography>
                             <Typography variant="caption" color="text.secondary">
                               Р {shortScore(analysis.rhythm_score)} · П{' '}

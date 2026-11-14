@@ -121,6 +121,7 @@ def _analysis_response(
         completed_at=analysis.completed_at,
         filename=filename,
         preview_error_id=preview_error_id,
+        subject=analysis.subject,
     )
 
 
@@ -227,6 +228,7 @@ def get_analysis(
         error_message=analysis.error_message,
         started_at=analysis.started_at,
         completed_at=analysis.completed_at,
+        subject=analysis.subject,
         errors=errors
     )
 

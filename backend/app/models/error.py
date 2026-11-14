@@ -33,6 +33,7 @@ class Error(Base):
         severity: Error severity level
         description: Human-readable error description
         screenshot_path: Path to composite screenshot (user + reference side-by-side)
+        person: Which partner the mistake belongs to (female or male), if known
         analysis: Related Analysis
     """
 
@@ -59,6 +60,7 @@ class Error(Base):
 
     # CRITICAL: Only ONE screenshot_path (composite: user + reference side-by-side)
     screenshot_path: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    person: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
 
     # Relationships
     analysis: Mapped["Analysis"] = relationship("Analysis", back_populates="errors")

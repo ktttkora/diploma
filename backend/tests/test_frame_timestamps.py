@@ -18,9 +18,12 @@ ANSWER = {
     "technique_score": 70,
     "musicality_score": 70,
     "errors": [
-        {"timestamp": 3, "category": "posture", "severity": "high", "title": "A"},
-        {"timestamp": 500.0, "category": "posture", "severity": "low", "title": "B"},
-        {"timestamp": -2, "category": "posture", "severity": "low", "title": "C"},
+        {"timestamp": 3, "category": "posture", "severity": "high", "title": "A",
+         "person": "female"},
+        {"timestamp": 500.0, "category": "posture", "severity": "low", "title": "B",
+         "person": "female"},
+        {"timestamp": -2, "category": "posture", "severity": "low", "title": "C",
+         "person": "female"},
     ],
 }
 

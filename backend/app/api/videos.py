@@ -4,12 +4,13 @@ Video API endpoints.
 Handles upload (which queues an analysis), listing, retrieval, and deletion.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Query
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 from app.db.session import get_db
 from app.models.user import User
@@ -31,6 +32,27 @@ from app.config import settings
 router = APIRouter(prefix="/api/videos", tags=["videos"])
 
 ALLOWED_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
+ALLOWED_SUBJECTS = {"female", "male", "both"}
+SUBJECT_REQUIRED = "Выберите, кого разбирать: девушку, мужчину или обоих партнёров"
+
+
+def normalize_subject(subject: Optional[str]) -> str:
+    """
+    Accept only female, male, or both.
+
+    Args:
+        subject: Form value from the upload
+
+    Returns:
+        Normalized subject
+
+    Raises:
+        ValueError: If the value is missing or not one of the three
+    """
+    value = (subject or "").strip().lower()
+    if value not in ALLOWED_SUBJECTS:
+        raise ValueError(SUBJECT_REQUIRED)
+    return value
 
 
 def _validate_upload(file: UploadFile) -> None:
@@ -83,6 +105,7 @@ def _read_probe_metadata(file_path: str) -> tuple[float, float]:
 @router.post("/", response_model=VideoUploadResponse, status_code=status.HTTP_201_CREATED)
 def upload_video(
     file: UploadFile = File(...),
+    subject: Optional[str] = Form(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -94,6 +117,7 @@ def upload_video(
 
     Args:
         file: Video file (multipart/form-data)
+        subject: Who to critique: female, male, or both
         current_user: Authenticated user
         db: Database session
 
@@ -101,9 +125,17 @@ def upload_video(
         Video and analysis IDs with the initial analysis status
 
     Raises:
-        HTTPException 400: If the file type or duration is unsupported
+        HTTPException 400: If the file type, duration, or subject is unsupported
         HTTPException 413: If the file is too large
     """
+    try:
+        chosen = normalize_subject(subject)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
     _validate_upload(file)
 
     contents = file.file.read()
@@ -152,7 +184,8 @@ def upload_video(
 
     analysis = Analysis(
         video_id=video.id,
-        status=AnalysisStatus.PENDING
+        status=AnalysisStatus.PENDING,
+        subject=chosen,
     )
     db.add(analysis)
     db.flush()

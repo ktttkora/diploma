@@ -19,6 +19,7 @@ class ErrorResponse(BaseModel):
     severity: ErrorSeverity
     description: str
     screenshot_path: Optional[str]
+    person: Optional[str] = None
 
     class Config:
         from_attributes = True

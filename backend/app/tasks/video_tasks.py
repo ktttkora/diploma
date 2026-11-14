@@ -81,6 +81,7 @@ def _merge_errors(
             "description": err.get("description", ""),
             "recommendation": err.get("recommendation", ""),
             "detected_element": err.get("detected_element"),
+            "person": err.get("person") or None,
         })
 
     for err in ai_errors:
@@ -92,6 +93,7 @@ def _merge_errors(
             "description": err.get("description", ""),
             "recommendation": err.get("recommendation", ""),
             "detected_element": err.get("detected_element"),
+            "person": err.get("person") or None,
         })
 
     merged.sort(key=lambda e: (
@@ -105,6 +107,7 @@ def _merge_errors(
     for err in merged:
         is_duplicate = any(
             kept["category"] == err["category"]
+            and kept.get("person") == err.get("person")
             and abs(kept["timestamp"] - err["timestamp"]) < DUPLICATE_WINDOW
             for kept in unique
         )
@@ -193,7 +196,8 @@ def process_video_task(self, video_id: int, analysis_id: int) -> Dict[str, Any]:
                         tempo=rhythm_result.get("tempo"),
                         user_poses=rhythm_result.get("poses"),
                         user_aspect=rhythm_result.get("video_aspect"),
-                        duration=video.duration
+                        duration=video.duration,
+                        subject=analysis.subject or "both",
                     )
                 except (ClaudeUnavailableError, RuntimeError) as exc:
                     # Rhythm results are still useful, so record the AI
@@ -220,7 +224,8 @@ def process_video_task(self, video_id: int, analysis_id: int) -> Dict[str, Any]:
                 error_type=err["category"],
                 severity=SEVERITY_MAP.get(err["severity"], ErrorSeverity.MEDIUM),
                 description=f"{err['title']}. {err['description']}".strip(),
-                screenshot_path=None
+                screenshot_path=None,
+                person=err.get("person") or None,
             )
             db.add(error_record)
             db.flush()

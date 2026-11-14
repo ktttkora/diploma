@@ -10,14 +10,14 @@ flowchart LR
   API --> DB[(PostgreSQL)]
   API --> Q[Celery и Redis]
   Q --> Rhythm[Ритм: MediaPipe и librosa]
-  Q --> AI[claude или claude_cli]
+  Q --> AI[grok_cli, claude_cli или claude]
   Q --> Shot[Скриншот: кадр и скелеты]
   Rhythm --> DB
   AI --> DB
   Shot --> DB
 ```
 
-1. `POST /api/videos/` сохраняет файл, создаёт видео и анализ со статусом ожидания и ставит `process_video_task`.
+1. `POST /api/videos/` сохраняет файл, создаёт видео и анализ со статусом ожидания и ставит `process_video_task`. Поле формы `subject` обязательно: `female`, `male` или `both`. Без него API отвечает 400: «Выберите, кого разбирать: девушку, мужчину или обоих партнёров». Выбор пишется в `analyses.subject`. У ошибки есть `errors.person` (`female` или `male`). Миграция `0004_analysis_subject`. MediaPipe по-прежнему видит одно тело: пол партнёров различает промпт по внешности в кадрах, а не красный скелет. Если выбран один человек, ошибки другого отбрасываются; пустая или чужая метка становится меткой выбранного. Для `both` остаётся только явная метка `female` или `male`.
 2. Задача в `backend/app/tasks/video_tasks.py` считает ритм, при живом AI снимает 20 кадров и вызывает `get_ai_service().analyze_video`, склеивает ошибки, оставляет не больше 10 и рисует скриншоты.
 3. Если AI недоступен, задача не падает: в анализ пишется текст ошибки, оценки AI остаются пустыми, ритм сохраняется.
 4. `POST /api/analyses/{id}/save` переносит ролик в сохранённые. `DELETE` на анализе или видео удаляет файлы и строки.
@@ -38,7 +38,7 @@ python scripts\build_reference_index.py
 | Путь | Зачем |
 |---|---|
 | `backend/app/api/` | HTTP: auth, users, videos, analyses |
-| `backend/app/services/` | Ритм, позы, эталоны, визуализация, Claude API и Claude CLI |
+| `backend/app/services/` | Ритм, позы, эталоны, визуализация, Grok CLI, Claude API и Claude CLI |
 | `backend/app/tasks/` | Celery: разбор видео и очистка временных файлов |
 | `backend/app/models/` | User, Video, Analysis, Error, TempUpload |
 | `backend/app/schemas/` | Pydantic-ответы |

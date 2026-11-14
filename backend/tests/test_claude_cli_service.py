@@ -32,6 +32,7 @@ VALID_ANSWER = {
         "description": "Плечи опущены",
         "recommendation": "Выпрямитесь",
         "detected_element": None,
+        "person": "female",
     }],
 }
 

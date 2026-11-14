@@ -4,7 +4,7 @@ Analysis database model.
 Represents analysis results for uploaded videos.
 """
 
-from sqlalchemy import String, Integer, Float, ForeignKey, DateTime, Text, Enum as SQLEnum
+from sqlalchemy import String, Integer, Float, ForeignKey, DateTime, Text, text, Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 from datetime import datetime
@@ -30,6 +30,7 @@ class Analysis(Base):
         id: Primary key
         video_id: Analyzed video ID (foreign key)
         status: Processing status
+        subject: Who to critique: female, male, or both
         overall_score: Combined score (0-100)
         rhythm_score: Rhythm matching score (0-100)
         posture_score: Posture score from AI analysis (0-100)
@@ -59,6 +60,12 @@ class Analysis(Base):
         default=AnalysisStatus.PENDING,
         nullable=False,
         index=True
+    )
+    subject: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default="both",
+        server_default=text("'both'"),
     )
 
     overall_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)

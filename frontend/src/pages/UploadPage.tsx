@@ -14,16 +14,23 @@ import {
   Box,
   Alert,
   LinearProgress,
+  FormControl,
+  FormLabel,
+  RadioGroup,
+  FormControlLabel,
+  Radio,
 } from '@mui/material';
 import { CloudUpload } from '@mui/icons-material';
 import { AxiosError } from 'axios';
 import Header from '../components/Header';
 import videoService from '../services/videoService';
-import type { ApiError } from '../types';
+import type { AnalysisSubject, ApiError } from '../types';
+import { SUBJECT_LABEL } from '../types';
 
 export default function UploadPage() {
   const navigate = useNavigate();
   const [file, setFile] = useState<File | null>(null);
+  const [subject, setSubject] = useState<AnalysisSubject | ''>('');
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState('');
@@ -72,13 +79,13 @@ export default function UploadPage() {
   };
 
   const handleUpload = async () => {
-    if (!file) return;
+    if (!file || !subject) return;
 
     setUploading(true);
     setError('');
 
     try {
-      const response = await videoService.upload(file, setProgress);
+      const response = await videoService.upload(file, subject, setProgress);
       // The upload queues an analysis; follow its progress
       navigate(`/processing/${response.analysis_id}`);
     } catch (err) {
@@ -154,6 +161,19 @@ export default function UploadPage() {
             </Paper>
           )}
 
+          <FormControl component="fieldset" sx={{ mt: 3 }} disabled={uploading}>
+            <FormLabel component="legend">Кого разбирать</FormLabel>
+            <RadioGroup
+              row
+              value={subject}
+              onChange={(event) => setSubject(event.target.value as AnalysisSubject)}
+            >
+              <FormControlLabel value="female" control={<Radio />} label={SUBJECT_LABEL.female} />
+              <FormControlLabel value="male" control={<Radio />} label={SUBJECT_LABEL.male} />
+              <FormControlLabel value="both" control={<Radio />} label={SUBJECT_LABEL.both} />
+            </RadioGroup>
+          </FormControl>
+
           {uploading && (
             <Box sx={{ mt: 3 }}>
               <Typography variant="body2" gutterBottom>
@@ -167,7 +187,7 @@ export default function UploadPage() {
             fullWidth
             variant="contained"
             size="large"
-            disabled={!file || uploading}
+            disabled={!file || !subject || uploading}
             onClick={handleUpload}
             sx={{ mt: 3 }}
           >

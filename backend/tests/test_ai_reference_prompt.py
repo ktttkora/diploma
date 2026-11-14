@@ -22,10 +22,10 @@ AI_RESPONSE = {
     "errors": [
         {"timestamp": 3.0, "category": "posture", "severity": "high",
          "title": "Спина", "description": "", "recommendation": "",
-         "detected_element": "Партнерша Свитчь"},
+         "detected_element": "Партнерша Свитчь", "person": "female"},
         {"timestamp": 5.0, "category": "technique", "severity": "medium",
          "title": "Шаг", "description": "", "recommendation": "",
-         "detected_element": "Неизвестный элемент"},
+         "detected_element": "Неизвестный элемент", "person": "female"},
     ],
 }
 

@@ -3,21 +3,29 @@
  */
 
 import api from './api';
-import type { Video, VideoUploadResponse, VideoListResponse } from '../types';
+import type {
+  AnalysisSubject,
+  Video,
+  VideoUploadResponse,
+  VideoListResponse,
+} from '../types';
 
 export const videoService = {
   /**
    * Upload a video and queue its analysis.
    *
    * @param file Video file
+   * @param subject Who to critique: female, male, or both
    * @param onProgress Optional progress callback (0-100)
    */
   async upload(
     file: File,
+    subject: AnalysisSubject,
     onProgress?: (percent: number) => void
   ): Promise<VideoUploadResponse> {
     const formData = new FormData();
     formData.append('file', file);
+    formData.append('subject', subject);
 
     const response = await api.post<VideoUploadResponse>('/api/videos/', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },

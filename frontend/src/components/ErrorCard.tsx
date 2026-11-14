@@ -19,7 +19,8 @@ import {
 } from '@mui/material';
 import { PlayArrow } from '@mui/icons-material';
 import analysisService from '../services/analysisService';
-import type { AnalysisError, ErrorSeverity } from '../types';
+import type { AnalysisError, AnalysisSubject, ErrorSeverity } from '../types';
+import { SUBJECT_LABEL } from '../types';
 
 interface ErrorCardProps {
   error: AnalysisError;
@@ -117,6 +118,9 @@ export default function ErrorCard({ error, analysisId, onSeek }: ErrorCardProps)
             mb: 1.5,
           }}
         >
+          {error.person === 'female' || error.person === 'male' ? (
+            <Chip label={SUBJECT_LABEL[error.person as AnalysisSubject]} size="small" />
+          ) : null}
           <Chip
             label={SEVERITY_LABEL[error.severity]}
             color={SEVERITY_COLOR[error.severity]}

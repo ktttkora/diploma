@@ -61,6 +61,15 @@ export type AnalysisStatus = 'pending' | 'processing' | 'completed' | 'failed';
 /** Error severity, matching the backend ErrorSeverity enum values. */
 export type ErrorSeverity = 'low' | 'medium' | 'high' | 'critical';
 
+/** Who the analysis should critique. */
+export type AnalysisSubject = 'female' | 'male' | 'both';
+
+export const SUBJECT_LABEL: Record<AnalysisSubject, string> = {
+  female: 'Девушка',
+  male: 'Мужчина',
+  both: 'Оба партнёра',
+};
+
 export interface Video {
   id: number;
   user_id: number;
@@ -96,12 +105,14 @@ export interface AnalysisError {
   severity: ErrorSeverity;
   description: string;
   screenshot_path: string | null;
+  person: 'female' | 'male' | null;
 }
 
 export interface Analysis {
   id: number;
   video_id: number;
   status: AnalysisStatus;
+  subject: AnalysisSubject | null;
   overall_score: number | null;
   rhythm_score: number | null;
   posture_score: number | null;
