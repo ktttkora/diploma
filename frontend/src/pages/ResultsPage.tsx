@@ -11,9 +11,6 @@ import {
   Container,
   Box,
   Typography,
-  AppBar,
-  Toolbar,
-  IconButton,
   Button,
   Alert,
   CircularProgress,
@@ -26,10 +23,10 @@ import {
   DialogActions,
   Snackbar,
 } from '@mui/material';
-import { Logout, History, CloudUpload, Delete } from '@mui/icons-material';
+import { CloudUpload, Delete } from '@mui/icons-material';
 import { AxiosError } from 'axios';
+import Header from '../components/Header';
 import analysisService from '../services/analysisService';
-import authService from '../services/authService';
 import ScoresSummary from '../components/ScoresSummary';
 import ErrorsList from '../components/ErrorsList';
 import VideoPlayer, { VideoPlayerHandle } from '../components/VideoPlayer';
@@ -77,11 +74,6 @@ export default function ResultsPage() {
     }
   }, [id, load]);
 
-  const handleLogout = () => {
-    authService.logout();
-    navigate('/login');
-  };
-
   const handleSave = async () => {
     setSaving(true);
     setActionError('');
@@ -120,26 +112,7 @@ export default function ResultsPage() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const header = (
-    <AppBar position="static">
-      <Toolbar>
-        <Typography variant="h6" sx={{ flexGrow: 1 }}>
-          Hustl Analyzer
-        </Typography>
-        <IconButton
-          color="inherit"
-          component={RouterLink}
-          to="/history"
-          title="История"
-        >
-          <History />
-        </IconButton>
-        <IconButton color="inherit" onClick={handleLogout} title="Выйти">
-          <Logout />
-        </IconButton>
-      </Toolbar>
-    </AppBar>
-  );
+  const header = <Header />;
 
   if (loading) {
     return (

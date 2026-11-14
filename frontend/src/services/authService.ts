@@ -5,7 +5,7 @@
  */
 
 import api from './api';
-import type { User, LoginResponse, RegisterRequest, LoginRequest } from '../types';
+import type { User, UserStats, LoginResponse, RegisterRequest, LoginRequest } from '../types';
 
 const TOKEN_KEY = 'access_token';
 
@@ -46,8 +46,20 @@ export const authService = {
   /**
    * Update current user profile.
    */
-  async updateProfile(data: { email?: string; password?: string }): Promise<User> {
+  async updateProfile(data: {
+    email?: string;
+    password?: string;
+    display_name?: string;
+  }): Promise<User> {
     const response = await api.put<User>('/api/users/me', data);
+    return response.data;
+  },
+
+  /**
+   * Progress statistics for the profile page.
+   */
+  async getStats(): Promise<UserStats> {
+    const response = await api.get<UserStats>('/api/users/stats');
     return response.data;
   },
 

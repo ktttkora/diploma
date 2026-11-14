@@ -14,14 +14,11 @@ import {
   Box,
   Alert,
   LinearProgress,
-  AppBar,
-  Toolbar,
-  IconButton,
 } from '@mui/material';
-import { CloudUpload, Logout } from '@mui/icons-material';
+import { CloudUpload } from '@mui/icons-material';
 import { AxiosError } from 'axios';
+import Header from '../components/Header';
 import videoService from '../services/videoService';
-import authService from '../services/authService';
 import type { ApiError } from '../types';
 
 export default function UploadPage() {
@@ -31,11 +28,6 @@ export default function UploadPage() {
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState('');
   const [dragActive, setDragActive] = useState(false);
-
-  const handleLogout = () => {
-    authService.logout();
-    navigate('/login');
-  };
 
   const validateFile = (f: File): string | null => {
     if (!f.type.startsWith('video/')) {
@@ -98,16 +90,7 @@ export default function UploadPage() {
 
   return (
     <>
-      <AppBar position="static">
-        <Toolbar>
-          <Typography variant="h6" sx={{ flexGrow: 1 }}>
-            Hustl Analyzer
-          </Typography>
-          <IconButton color="inherit" onClick={handleLogout} title="Выйти">
-            <Logout />
-          </IconButton>
-        </Toolbar>
-      </AppBar>
+      <Header />
 
       <Container maxWidth="md">
         <Box sx={{ mt: 4 }}>

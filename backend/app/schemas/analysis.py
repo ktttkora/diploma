@@ -25,6 +25,8 @@ class AnalysisResponse(BaseModel):
     error_message: Optional[str] = None
     started_at: datetime
     completed_at: Optional[datetime] = None
+    filename: Optional[str] = None
+    preview_error_id: Optional[int] = None
 
     class Config:
         from_attributes = True

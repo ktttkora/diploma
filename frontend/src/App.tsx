@@ -10,6 +10,7 @@ import UploadPage from './pages/UploadPage';
 import ProcessingPage from './pages/ProcessingPage';
 import ResultsPage from './pages/ResultsPage';
 import HistoryPage from './pages/HistoryPage';
+import ProfilePage from './pages/ProfilePage';
 import authService from './services/authService';
 
 const theme = createTheme({
@@ -87,6 +88,14 @@ export default function App() {
             element={
               <PrivateRoute>
                 <HistoryPage />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/profile"
+            element={
+              <PrivateRoute>
+                <ProfilePage />
               </PrivateRoute>
             }
           />

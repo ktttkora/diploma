@@ -5,8 +5,39 @@
 export interface User {
   id: number;
   email: string;
+  display_name: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface ScoreAverages {
+  overall: number | null;
+  rhythm: number | null;
+  posture: number | null;
+  technique: number | null;
+  music: number | null;
+}
+
+export interface FrequentError {
+  error_type: string;
+  count: number;
+}
+
+export interface ProgressPoint {
+  analysis_id: number;
+  completed_at: string | null;
+  overall_score: number | null;
+  rhythm_score: number | null;
+  posture_score: number | null;
+  technique_score: number | null;
+  music_score: number | null;
+}
+
+export interface UserStats {
+  saved_analyses: number;
+  average_scores: ScoreAverages;
+  top_errors: FrequentError[];
+  progress: ProgressPoint[];
 }
 
 export interface RegisterRequest {
@@ -81,6 +112,8 @@ export interface Analysis {
   error_message: string | null;
   started_at: string;
   completed_at: string | null;
+  filename?: string | null;
+  preview_error_id?: number | null;
   errors?: AnalysisError[];
 }
 

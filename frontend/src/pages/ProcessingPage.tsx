@@ -6,7 +6,7 @@
  */
 
 import { useEffect, useState, useCallback } from 'react';
-import { useParams, useNavigate, Link as RouterLink } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import {
   Container,
   Paper,
@@ -18,15 +18,11 @@ import {
   Stepper,
   Step,
   StepLabel,
-  AppBar,
-  Toolbar,
-  IconButton,
   CircularProgress,
 } from '@mui/material';
-import { Logout, History } from '@mui/icons-material';
 import { AxiosError } from 'axios';
+import Header from '../components/Header';
 import analysisService from '../services/analysisService';
-import authService from '../services/authService';
 import { usePolling } from '../hooks/usePolling';
 import type { AnalysisStatusResponse, ApiError } from '../types';
 
@@ -54,11 +50,6 @@ export default function ProcessingPage() {
   const [startedAt] = useState(() => Date.now());
   const [stage, setStage] = useState(0);
   const [fatalError, setFatalError] = useState('');
-
-  const handleLogout = () => {
-    authService.logout();
-    navigate('/login');
-  };
 
   const fetchStatus = useCallback(
     () => analysisService.getStatus(id),
@@ -105,24 +96,7 @@ export default function ProcessingPage() {
 
   return (
     <>
-      <AppBar position="static">
-        <Toolbar>
-          <Typography variant="h6" sx={{ flexGrow: 1 }}>
-            Hustl Analyzer
-          </Typography>
-          <IconButton
-            color="inherit"
-            component={RouterLink}
-            to="/history"
-            title="История"
-          >
-            <History />
-          </IconButton>
-          <IconButton color="inherit" onClick={handleLogout} title="Выйти">
-            <Logout />
-          </IconButton>
-        </Toolbar>
-      </AppBar>
+      <Header />
 
       <Container maxWidth="md">
         <Box sx={{ mt: 4 }}>

@@ -6,11 +6,11 @@ Provides analysis retrieval, polling, save/discard, and screenshot serving.
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from fastapi.responses import FileResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
 from datetime import datetime
 from pathlib import Path
-from typing import List
+from typing import Dict, List, Optional
 
 from app.db.session import get_db
 from app.models.user import User
@@ -64,6 +64,66 @@ def _get_owned_analysis(analysis_id: int, user_id: int, db: Session) -> Analysis
     return analysis
 
 
+def _preview_error_ids(db: Session, analysis_ids: List[int]) -> Dict[int, int]:
+    """
+    Pick one screenshot error per analysis for history thumbnails.
+
+    Args:
+        db: Database session
+        analysis_ids: Analyses on the current page
+
+    Returns:
+        Map of analysis id to an error id that has a screenshot
+    """
+    if not analysis_ids:
+        return {}
+
+    rows = (
+        db.query(Error.analysis_id, func.min(Error.id))
+        .filter(
+            Error.analysis_id.in_(analysis_ids),
+            Error.screenshot_path.isnot(None),
+        )
+        .group_by(Error.analysis_id)
+        .all()
+    )
+    return {analysis_id: error_id for analysis_id, error_id in rows}
+
+
+def _analysis_response(
+    analysis: Analysis,
+    preview_error_id: Optional[int] = None
+) -> AnalysisResponse:
+    """
+    Build an analysis list item, including the video name and a thumbnail id.
+
+    Args:
+        analysis: Analysis row, with its video loaded
+        preview_error_id: Error whose screenshot can stand in as a thumbnail
+
+    Returns:
+        Analysis response
+    """
+    filename = analysis.video.filename if analysis.video is not None else None
+    return AnalysisResponse(
+        id=analysis.id,
+        video_id=analysis.video_id,
+        status=analysis.status,
+        overall_score=analysis.overall_score,
+        rhythm_score=analysis.rhythm_score,
+        posture_score=analysis.posture_score,
+        technique_score=analysis.technique_score,
+        music_score=analysis.music_score,
+        total_errors=analysis.total_errors,
+        processing_time=analysis.processing_time,
+        error_message=analysis.error_message,
+        started_at=analysis.started_at,
+        completed_at=analysis.completed_at,
+        filename=filename,
+        preview_error_id=preview_error_id,
+    )
+
+
 @router.get("/", response_model=AnalysisListResponse)
 def list_analyses(
     page: int = Query(1, ge=1, description="Page number"),
@@ -105,16 +165,21 @@ def list_analyses(
     offset = (page - 1) * page_size
     analyses = (
         base_query
+        .options(joinedload(Analysis.video))
         .order_by(Analysis.started_at.desc())
         .offset(offset)
         .limit(page_size)
         .all()
     )
+    previews = _preview_error_ids(db, [item.id for item in analyses])
 
     total_pages = (total + page_size - 1) // page_size
 
     return AnalysisListResponse(
-        analyses=analyses,
+        analyses=[
+            _analysis_response(item, previews.get(item.id))
+            for item in analyses
+        ],
         total=total,
         page=page,
         page_size=page_size,

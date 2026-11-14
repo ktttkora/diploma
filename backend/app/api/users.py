@@ -9,9 +9,10 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models.user import User
-from app.schemas.user import UserResponse, UserUpdate
+from app.schemas.user import UserResponse, UserStatsResponse, UserUpdate
 from app.api.deps import get_current_user
 from app.core.security import get_password_hash
+from app.services.stats_service import build_user_stats
 
 
 router = APIRouter(prefix="/api/users", tags=["users"])
@@ -43,7 +44,7 @@ def update_me(
     Update current user profile.
 
     Args:
-        user_update: Updated user data (email and/or password)
+        user_update: Updated user data (name, email and/or password)
         current_user: Authenticated user from JWT token
         db: Database session
 
@@ -73,10 +74,34 @@ def update_me(
     if user_update.password is not None:
         current_user.hashed_password = get_password_hash(user_update.password)
 
+    # Update the visible name when the field was sent. Blank clears it.
+    if "display_name" in user_update.model_fields_set:
+        name = (user_update.display_name or "").strip()
+        current_user.display_name = name or None
+
     db.commit()
     db.refresh(current_user)
 
     return current_user
+
+
+@router.get("/stats", response_model=UserStatsResponse)
+def get_stats(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Progress statistics over the current user's saved analyses.
+
+    Args:
+        current_user: Authenticated user from JWT token
+        db: Database session
+
+    Returns:
+        Average scores, the three most common error types, and the
+        score timeline
+    """
+    return build_user_stats(db, current_user.id)
 
 
 @router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)

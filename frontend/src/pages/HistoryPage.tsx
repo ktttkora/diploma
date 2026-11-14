@@ -6,14 +6,11 @@
  */
 
 import { useEffect, useState, useCallback } from 'react';
-import { useNavigate, Link as RouterLink } from 'react-router-dom';
+import { Link as RouterLink } from 'react-router-dom';
 import {
   Container,
   Box,
   Typography,
-  AppBar,
-  Toolbar,
-  IconButton,
   Paper,
   Table,
   TableBody,
@@ -26,11 +23,18 @@ import {
   Alert,
   CircularProgress,
   TablePagination,
+  IconButton,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogContentText,
+  DialogActions,
 } from '@mui/material';
-import { Logout, CloudUpload, ArrowForward } from '@mui/icons-material';
+import { ArrowForward, Delete } from '@mui/icons-material';
 import { AxiosError } from 'axios';
+import Header from '../components/Header';
 import analysisService from '../services/analysisService';
-import authService from '../services/authService';
+import videoService from '../services/videoService';
 import type { Analysis, ApiError } from '../types';
 
 const PAGE_SIZE = 10;
@@ -56,14 +60,64 @@ function scoreColor(score: number | null): 'success.main' | 'warning.main' | 'er
   return 'error.main';
 }
 
-export default function HistoryPage() {
-  const navigate = useNavigate();
+/** Format a score for the compact category line. */
+function shortScore(score: number | null): string {
+  return score === null ? '—' : score.toFixed(0);
+}
 
+/** Small preview taken from the first error screenshot. */
+function HistoryThumb({ analysis }: { analysis: Analysis }) {
+  const [url, setUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!analysis.preview_error_id) return undefined;
+    let objectUrl = '';
+    let active = true;
+    analysisService
+      .fetchScreenshot(analysis.id, analysis.preview_error_id)
+      .then((nextUrl) => {
+        if (!active) {
+          URL.revokeObjectURL(nextUrl);
+          return;
+        }
+        objectUrl = nextUrl;
+        setUrl(nextUrl);
+      })
+      .catch(() => {
+        // A missing screenshot still leaves the row usable
+      });
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [analysis.id, analysis.preview_error_id]);
+
+  if (!url) {
+    return (
+      <Box
+        sx={{ width: 96, height: 54, borderRadius: 1, bgcolor: 'action.hover' }}
+      />
+    );
+  }
+
+  return (
+    <Box
+      component="img"
+      src={url}
+      alt=""
+      sx={{ width: 96, height: 54, objectFit: 'cover', borderRadius: 1 }}
+    />
+  );
+}
+
+export default function HistoryPage() {
   const [analyses, setAnalyses] = useState<Analysis[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [pendingDelete, setPendingDelete] = useState<Analysis | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async (pageIndex: number) => {
     setLoading(true);
@@ -91,31 +145,30 @@ export default function HistoryPage() {
     void load(page);
   }, [load, page]);
 
-  const handleLogout = () => {
-    authService.logout();
-    navigate('/login');
+  const handleDelete = async () => {
+    if (!pendingDelete) return;
+    setDeleting(true);
+    try {
+      await videoService.delete(pendingDelete.video_id);
+      setPendingDelete(null);
+      const nextPage = analyses.length === 1 && page > 0 ? page - 1 : page;
+      if (nextPage !== page) {
+        setPage(nextPage);
+      } else {
+        await load(page);
+      }
+    } catch (err) {
+      const axiosError = err as AxiosError<ApiError>;
+      setError(axiosError.response?.data?.detail || 'Не удалось удалить видео');
+      setPendingDelete(null);
+    } finally {
+      setDeleting(false);
+    }
   };
 
   return (
     <>
-      <AppBar position="static">
-        <Toolbar>
-          <Typography variant="h6" sx={{ flexGrow: 1 }}>
-            Hustl Analyzer
-          </Typography>
-          <Button
-            color="inherit"
-            component={RouterLink}
-            to="/upload"
-            startIcon={<CloudUpload />}
-          >
-            Загрузить
-          </Button>
-          <IconButton color="inherit" onClick={handleLogout} title="Выйти">
-            <Logout />
-          </IconButton>
-        </Toolbar>
-      </AppBar>
+      <Header />
 
       <Container maxWidth="lg">
         <Box sx={{ mt: 4, mb: 6 }}>
@@ -156,16 +209,32 @@ export default function HistoryPage() {
               <Table>
                 <TableHead>
                   <TableRow>
+                    <TableCell>Видео</TableCell>
                     <TableCell>Дата</TableCell>
                     <TableCell align="right">Оценка</TableCell>
                     <TableCell align="right">Ошибок</TableCell>
-                    <TableCell align="right">Длительность</TableCell>
                     <TableCell align="right" />
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {analyses.map((analysis) => (
                     <TableRow key={analysis.id} hover>
+                      <TableCell>
+                        <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+                          <HistoryThumb analysis={analysis} />
+                          <Box>
+                            <Typography variant="body2">
+                              {analysis.filename || `Видео #${analysis.video_id}`}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              Р {shortScore(analysis.rhythm_score)} · П{' '}
+                              {shortScore(analysis.posture_score)} · Т{' '}
+                              {shortScore(analysis.technique_score)} · М{' '}
+                              {shortScore(analysis.music_score)}
+                            </Typography>
+                          </Box>
+                        </Box>
+                      </TableCell>
                       <TableCell>{formatDate(analysis.started_at)}</TableCell>
                       <TableCell
                         align="right"
@@ -186,11 +255,6 @@ export default function HistoryPage() {
                         />
                       </TableCell>
                       <TableCell align="right">
-                        {analysis.processing_time !== null
-                          ? `${analysis.processing_time.toFixed(0)} с`
-                          : '—'}
-                      </TableCell>
-                      <TableCell align="right">
                         <Button
                           size="small"
                           endIcon={<ArrowForward />}
@@ -199,6 +263,13 @@ export default function HistoryPage() {
                         >
                           Открыть
                         </Button>
+                        <IconButton
+                          aria-label="Удалить"
+                          color="error"
+                          onClick={() => setPendingDelete(analysis)}
+                        >
+                          <Delete />
+                        </IconButton>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -219,6 +290,24 @@ export default function HistoryPage() {
           )}
         </Box>
       </Container>
+
+      <Dialog open={pendingDelete !== null} onClose={() => setPendingDelete(null)}>
+        <DialogTitle>Удалить анализ?</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Видео «{pendingDelete?.filename || 'без названия'}» и его результат
+            будут удалены без возможности восстановления.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPendingDelete(null)} disabled={deleting}>
+            Отмена
+          </Button>
+          <Button color="error" onClick={() => void handleDelete()} disabled={deleting}>
+            Удалить
+          </Button>
+        </DialogActions>
+      </Dialog>
     </>
   );
 }
