@@ -641,7 +641,9 @@ class PoseService:
                     "x": float(landmark.x),
                     "y": float(landmark.y),
                     "z": float(landmark.z),
-                    "visibility": float(landmark.visibility or 1.0),
+                    "visibility": (
+                        1.0 if landmark.visibility is None else float(landmark.visibility)
+                    ),
                 }
                 for landmark in people
             ])

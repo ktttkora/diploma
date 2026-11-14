@@ -37,6 +37,15 @@ AI_FRAME_COUNT = 20
 DUPLICATE_WINDOW = 0.25
 
 
+def _error_text(err: Dict[str, Any]) -> str:
+    """Remark shown above the picture. The picture itself stays free of text."""
+    text = f"{err.get('title', '')}. {err.get('description', '')}".strip()
+    recommendation = str(err.get("recommendation") or "").strip()
+    if recommendation and "Как исправить:" not in text:
+        text = f"{text} Как исправить: {recommendation}".strip()
+    return text[:1000]
+
+
 def _set_progress(task, step: int, total: int, message: str) -> None:
     """
     Report progress through Celery's result backend.
@@ -227,7 +236,7 @@ def process_video_task(self, video_id: int, analysis_id: int) -> Dict[str, Any]:
                 timestamp=err["timestamp"],
                 error_type=err["category"],
                 severity=SEVERITY_MAP.get(err["severity"], ErrorSeverity.MEDIUM),
-                description=f"{err['title']}. {err['description']}".strip(),
+                description=_error_text(err),
                 screenshot_path=None,
                 person=err.get("person") or None,
             )

@@ -458,14 +458,14 @@ class ReferenceService:
         self,
         element_name: str,
         landmarks: List[Dict[str, Any]],
-        max_distance: float = 0.4,
+        max_distance: float = 0.5,
     ) -> Optional[List[Dict[str, Any]]]:
         """
         Find the reference pose whose shape is close to the dancer's pose.
 
         Matching by the user's timestamp pulls an unrelated moment from the
-        element clip. A standing reference next to a kick does not explain
-        the mistake, so a poor match returns None.
+        element clip. A poor match returns None. The limit is loose enough
+        that a faulty pose of the same element still finds the catalog shape.
         """
         from app.services.pose_service import pose_distance
 

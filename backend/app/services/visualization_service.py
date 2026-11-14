@@ -1,9 +1,9 @@
 """
 Visualization service for error screenshots.
 
-Builds a composite image per error: the user's frame with a red skeleton
-next to the reference pose with a green skeleton, plus a caption bar with
-the timestamp, title, and recommendation.
+Builds a composite image per error: the user's frame with one red
+skeleton, and the catalog pose in green beside it when the shapes match.
+The written remark stays on the result card, not on the picture.
 
 Text is drawn with Pillow (see app.utils.image_text) because OpenCV's
 putText cannot render Cyrillic.
@@ -18,7 +18,7 @@ import tempfile
 from app.services.reference_service import reference_service
 from app.services.pose_service import choose_pose, pose_service
 from app.utils.video_utils import extract_frame
-from app.utils.image_text import draw_text_block, get_font, wrap_text
+from app.utils.image_text import draw_text_block
 from app.services.storage_service import storage_service
 
 
@@ -28,8 +28,9 @@ POSE_CONNECTIONS: List[Tuple[int, int]] = [
     (0, 1), (1, 2), (2, 3), (3, 7),
     (0, 4), (4, 5), (5, 6), (6, 8),
     (9, 10),
-    # Torso
+    # Torso and neck. Ears join the shoulders so the head is not a separate blob.
     (11, 12), (11, 23), (12, 24), (23, 24),
+    (0, 11), (0, 12),
     # Left arm
     (11, 13), (13, 15), (15, 17), (15, 19), (15, 21), (17, 19),
     # Right arm
@@ -46,8 +47,6 @@ VISIBILITY_THRESHOLD = 0.3
 RED = (0, 0, 255)
 GREEN = (0, 200, 0)
 WHITE = (255, 255, 255)
-LIGHT_GREY = (200, 200, 200)
-CAPTION_BG = (32, 32, 32)
 REFERENCE_BG = (240, 240, 240)
 
 PERSON_LABEL = {"female": "Девушка", "male": "Мужчина"}
@@ -116,36 +115,46 @@ class VisualizationService:
         )
         return np.vstack([strip, image])
 
-    def _build_caption(
+    def _fit_landmarks(
         self,
-        width: int,
-        timestamp: float,
-        title: str,
-        description: str,
-        recommendation: str,
-    ) -> np.ndarray:
+        landmarks: List[Dict[str, float]],
+        panel_width: int,
+        panel_height: int,
+        aspect: float,
+    ) -> List[Dict[str, float]]:
         """
-        Build the caption bar placed under the frames.
+        Place a catalog pose in the panel without stretching it.
 
-        The bar states what is wrong and how to fix it, so the picture is
-        readable without the card text above it.
+        Landmark x and y are fractions of a video frame. A wide frame makes
+        an upright body look narrow if those fractions are drawn on a tall crop.
         """
-        heading = f"{timestamp:.1f} с — {title}".strip()
-        lines: List[Tuple[str, int, Tuple[int, int, int]]] = [(heading, 26, WHITE)]
-
-        if description:
-            font = get_font(22)
-            wrapped = wrap_text(description, font, width - 24)[:4]
-            lines.extend((line, 22, WHITE) for line in wrapped)
-        if recommendation:
-            font = get_font(20)
-            wrapped = wrap_text(f"Как исправить: {recommendation}", font, width - 24)[:3]
-            lines.extend((line, 20, LIGHT_GREY) for line in wrapped)
-
-        line_height = 34
-        caption_height = 24 + line_height * len(lines)
-        caption = np.full((caption_height, width, 3), CAPTION_BG, dtype=np.uint8)
-        return draw_text_block(caption, lines, padding=12, line_spacing=8)
+        visible = [
+            landmark for landmark in landmarks
+            if landmark.get("visibility", 1.0) >= VISIBILITY_THRESHOLD
+        ]
+        if len(visible) < 3 or panel_width < 2 or panel_height < 2:
+            return landmarks
+        points = [
+            (float(landmark["x"]) * aspect, float(landmark["y"]))
+            for landmark in visible
+        ]
+        xs = [point[0] for point in points]
+        ys = [point[1] for point in points]
+        span_x = max(max(xs) - min(xs), 1e-3)
+        span_y = max(max(ys) - min(ys), 1e-3)
+        center_x = (min(xs) + max(xs)) / 2
+        center_y = (min(ys) + max(ys)) / 2
+        scale = min(panel_width * 0.82 / span_x, panel_height * 0.82 / span_y)
+        fitted = []
+        for landmark in landmarks:
+            px = float(landmark["x"]) * aspect
+            py = float(landmark["y"])
+            fitted.append({
+                **landmark,
+                "x": 0.5 + (px - center_x) * scale / panel_width,
+                "y": 0.5 + (py - center_y) * scale / panel_height,
+            })
+        return fitted
 
     def create_error_screenshot(
         self,
@@ -157,9 +166,9 @@ class VisualizationService:
         """
         Create a composite screenshot for one error.
 
-        Layout: the user's frame with a red skeleton, side by side with the
-        reference pose in green when one is available; a caption bar with
-        the timestamp, title, and recommendation sits underneath.
+        Layout: the user's frame with one red skeleton. When a catalog pose
+        has the same shape, its green skeleton sits beside the photo.
+        The remark and the fix stay on the card above the picture.
 
         Args:
             video_path: Path to the source video
@@ -185,7 +194,6 @@ class VisualizationService:
 
             title = str(error_data.get("title", "Ошибка"))
             description = str(error_data.get("description", ""))
-            recommendation = str(error_data.get("recommendation", ""))
             note = f"{title}. {description}"
             person = str(error_data.get("person") or "")
             label = PERSON_LABEL.get(person, "Поза")
@@ -198,6 +206,13 @@ class VisualizationService:
                 person=person or None,
                 image=user_frame,
             )
+            # Match the catalog on the original pose. The close-up crop
+            # stretches x and y differently and would hide a real match.
+            reference_landmarks = None
+            if user_landmarks:
+                reference_landmarks = self._find_reference_pose(
+                    detected_element, user_landmarks
+                )
             if user_landmarks:
                 # Arms are left out of the box so a hand on the partner
                 # does not pull him into the close-up.
@@ -214,17 +229,6 @@ class VisualizationService:
                     thickness=thickness,
                     joint_radius=max(3, thickness),
                 )
-            elif len(poses) > 1:
-                description = (
-                    "В кадре несколько человек, и скелет не нарисован, "
-                    "чтобы не обвести не того. " + description
-                ).strip()
-
-            reference_landmarks = None
-            if user_landmarks:
-                reference_landmarks = self._find_reference_pose(
-                    detected_element, user_landmarks
-                )
 
             reference_frame = None
             if reference_landmarks:
@@ -234,39 +238,36 @@ class VisualizationService:
                 )
                 reference_frame = self.draw_skeleton(
                     reference_frame,
-                    reference_landmarks,
+                    self._fit_landmarks(
+                        reference_landmarks,
+                        width,
+                        height,
+                        self._reference_aspect(detected_element),
+                    ),
                     GREEN,
-                    thickness=max(2, width // 180),
-                    joint_radius=max(3, width // 180),
+                    thickness=max(2, width // 140),
+                    joint_radius=max(3, width // 140),
                 )
 
-            user_frame = self._with_title(user_frame, label, WHITE, (20, 20, 20))
             if reference_frame is not None:
+                user_frame = self._with_title(user_frame, label, WHITE, (20, 20, 20))
                 reference_frame = self._with_title(
-                    reference_frame, "Эталон", (0, 90, 0), (255, 255, 255)
+                    reference_frame, "Как надо", (0, 90, 0), (255, 255, 255)
                 )
-                pair = np.hstack([user_frame, reference_frame])
-                caption = self._build_caption(
-                    pair.shape[1], timestamp, title, description, recommendation
-                )
-                final = np.vstack([pair, caption])
+                if reference_frame.shape[0] != user_frame.shape[0]:
+                    target = max(reference_frame.shape[0], user_frame.shape[0])
+                    def pad(image: np.ndarray, fill: Tuple[int, int, int]) -> np.ndarray:
+                        extra = target - image.shape[0]
+                        if extra <= 0:
+                            return image
+                        return cv2.copyMakeBorder(
+                            image, 0, extra, 0, 0, cv2.BORDER_CONSTANT, value=fill
+                        )
+                    user_frame = pad(user_frame, (20, 20, 20))
+                    reference_frame = pad(reference_frame, REFERENCE_BG)
+                final = np.hstack([user_frame, reference_frame])
             else:
-                caption = self._build_caption(
-                    640, timestamp, title, description, recommendation
-                )
-                # The explanation sits beside the close-up, not in a thin
-                # strip under a wide empty frame.
-                if caption.shape[0] < user_frame.shape[0]:
-                    extra = user_frame.shape[0] - caption.shape[0]
-                    caption = cv2.copyMakeBorder(
-                        caption, 0, extra, 0, 0, cv2.BORDER_CONSTANT, value=CAPTION_BG
-                    )
-                elif caption.shape[0] > user_frame.shape[0]:
-                    extra = caption.shape[0] - user_frame.shape[0]
-                    user_frame = cv2.copyMakeBorder(
-                        user_frame, 0, extra, 0, 0, cv2.BORDER_CONSTANT, value=(20, 20, 20)
-                    )
-                final = np.hstack([user_frame, caption])
+                final = user_frame
 
             return self._save(final, error_data)
 
@@ -322,6 +323,20 @@ class VisualizationService:
                 "y": (float(landmark["y"]) * height - top) / crop_h,
             })
         return cropped, rescaled
+
+    def _reference_aspect(self, element_name: Optional[str]) -> float:
+        """Width divided by height of the catalog clip. Wide video is above 1."""
+        if not element_name:
+            return 16 / 9
+        data = reference_service.get_reference(element_name) or {}
+        try:
+            width = float(data.get("width") or 0)
+            height = float(data.get("height") or 0)
+        except (TypeError, ValueError):
+            width = height = 0.0
+        if width > 0 and height > 0:
+            return width / height
+        return 16 / 9
 
     def _find_reference_pose(
         self,
