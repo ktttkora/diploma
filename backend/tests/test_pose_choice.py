@@ -1,6 +1,8 @@
 """Which dancer is outlined, and whether a reference pose is the same shape."""
 
-from app.services.pose_service import choose_pose, pose_distance
+import numpy as np
+
+from app.services.pose_service import choose_pose, pose_distance, same_dancer
 from app.services.visualization_service import highlighted_connections
 
 
@@ -30,20 +32,71 @@ def test_anchor_selects_the_person_under_the_point() -> None:
     assert chosen is right
 
 
-def test_female_without_anchor_skips_the_prominent_dancer() -> None:
-    """Without a point, the woman is the partner MediaPipe did not lock onto."""
-    prominent = body(0.3, 0.5)
-    partner = body(0.7, 0.5)
-    chosen = choose_pose([prominent, partner], text="Сутулая спина", person="female")
-    assert chosen is partner
+def test_two_people_without_a_cue_are_not_assigned_by_order() -> None:
+    """Detection order is not a gender. An unclear pair is left undrawn."""
+    assert choose_pose(
+        [body(0.3, 0.5), body(0.7, 0.5)],
+        text="Сутулая спина",
+        person="female",
+    ) is None
+    assert choose_pose(
+        [body(0.3, 0.5), body(0.7, 0.5)],
+        text="Сутулая спина",
+        person="male",
+    ) is None
 
 
-def test_male_without_anchor_keeps_the_prominent_dancer() -> None:
-    """Without a point, the man stays the body MediaPipe saw first."""
-    prominent = body(0.3, 0.5)
-    partner = body(0.7, 0.5)
-    chosen = choose_pose([prominent, partner], text="Сутулая спина", person="male")
-    assert chosen is prominent
+def test_deep_sit_picks_the_wider_stance() -> None:
+    """A lunge described for the woman outlines the dancer with feet apart."""
+    standing = body(0.62, 0.5)
+    standing[27] = {"x": 0.60, "y": 0.9, "visibility": 1.0}
+    standing[28] = {"x": 0.64, "y": 0.9, "visibility": 1.0}
+    lunging = body(0.45, 0.55)
+    lunging[27] = {"x": 0.30, "y": 0.9, "visibility": 1.0}
+    lunging[28] = {"x": 0.62, "y": 0.9, "visibility": 1.0}
+    chosen = choose_pose(
+        [standing, lunging],
+        text="партнерша глубоко садится в левое бедро, провал в выпад",
+        person="female",
+    )
+    assert chosen is lunging
+
+
+def test_lighter_chest_wins_over_the_wider_stance() -> None:
+    """Clothes decide the partner before a lunge cue can pick the man."""
+    dark = body(0.30, 0.50)
+    dark[27] = {"x": 0.10, "y": 0.9, "visibility": 1.0}
+    dark[28] = {"x": 0.50, "y": 0.9, "visibility": 1.0}
+    light = body(0.70, 0.50)
+    image = np.zeros((100, 100, 3), dtype=np.uint8)
+    image[38:62, 58:82] = 255
+    text = "партнерша глубоко садится в левое бедро, провал в выпад"
+    assert choose_pose([dark, light], text=text, person="female", image=image) is light
+    assert choose_pose([dark, light], text=text, person="male", image=image) is dark
+
+
+def test_close_chests_in_different_clothes_stay_two_people() -> None:
+    """A hold can put both chest estimates near each other."""
+    dark = body(0.30, 0.50)
+    light = body(0.38, 0.48)
+    image = np.zeros((400, 400, 3), dtype=np.uint8)
+    image[180:212, 140:176] = 255
+    assert same_dancer(dark, light) is True
+    assert same_dancer(dark, light, image) is False
+    text = "партнерша глубоко садится в левое бедро"
+    assert choose_pose([dark, light], text=text, person="female", image=image) is light
+    assert choose_pose([dark, light], text=text, person="male", image=image) is dark
+
+
+def test_a_single_pose_in_the_wrong_clothes_is_not_drawn() -> None:
+    """One dark chest is not the woman, and one light chest is not the man."""
+    dancer = body(0.5, 0.5)
+    dark = np.zeros((100, 100, 3), dtype=np.uint8)
+    light = np.full((100, 100, 3), 255, dtype=np.uint8)
+    assert choose_pose([dancer], text="потеря оси", person="female", image=dark) is None
+    assert choose_pose([dancer], text="потеря оси", person="male", image=light) is None
+    assert choose_pose([dancer], text="потеря оси", person="female", image=light) is dancer
+    assert choose_pose([dancer], text="потеря оси", person="male", image=dark) is dancer
 
 
 def test_kick_text_selects_the_raised_foot() -> None:

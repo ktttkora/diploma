@@ -4,12 +4,26 @@ Pose detection service using MediaPipe.
 Extracts body landmarks, detects steps, and calculates joint angles.
 """
 
+from pathlib import Path
+
 import cv2
 import mediapipe as mp
 import numpy as np
 from typing import Dict, List, Any, Optional, Tuple
 
 mp_pose = mp.solutions.pose
+
+# Second detector. The pose solution returns one body and, on a close
+# hold, both of its passes can land on the same dancer. This file is
+# downloaded once; if it is missing, the solution loop still runs.
+LANDMARKER_PATH = (
+    Path(__file__).resolve().parents[2] / "data" / "models" / "pose_landmarker_lite.task"
+)
+# A white top against a black shirt. The patch can catch the partner,
+# so the gap is smaller than a clean chest sample.
+BRIGHTNESS_GAP = 60
+FEMALE_DARK_LIMIT = 60
+MALE_LIGHT_LIMIT = 160
 
 # Torso and feet used to tell two dancers apart. Arms are left out of the
 # mask so an extended hand does not hide the partner.
@@ -78,20 +92,87 @@ def mentions_raised_leg(text: str) -> bool:
     )
 
 
+def mentions_deep_sit(text: str) -> bool:
+    """Whether the error text describes a lunge or a drop into the hip."""
+    lowered = (text or "").lower()
+    return any(word in lowered for word in ("садит", "выпад", "бедр", "провал"))
+
+
+def stance_width(landmarks: List[Dict[str, float]]) -> Optional[float]:
+    """Horizontal distance between the ankles. Wider means a longer lunge."""
+    if len(landmarks) <= 28:
+        return None
+    left, right = landmarks[27], landmarks[28]
+    if left.get("visibility", 1.0) < 0.3 or right.get("visibility", 1.0) < 0.3:
+        return None
+    return abs(float(left["x"]) - float(right["x"]))
+
+
+def torso_brightness(image: np.ndarray, landmarks: List[Dict[str, float]]) -> Optional[float]:
+    """Mean brightness of a small patch on the chest, from 0 to 255."""
+    center = torso_center(landmarks)
+    if center is None or image is None or image.size == 0:
+        return None
+    height, width = image.shape[:2]
+    x = min(max(int(center[0] * width), 0), width - 1)
+    y = min(max(int(center[1] * height), 0), height - 1)
+    patch = image[max(0, y - 12):y + 12, max(0, x - 12):x + 12]
+    if patch.size == 0:
+        return None
+    return float(patch.mean())
+
+
+def same_dancer(
+    left: List[Dict[str, float]],
+    right: List[Dict[str, float]],
+    image: Optional[np.ndarray] = None,
+) -> bool:
+    """
+    Whether two detections are the same dancer.
+
+    Close chests usually are. A large brightness gap keeps both: in a
+    hold the two torso estimates can sit near each other while the
+    clothes are different.
+    """
+    left_center = torso_center(left)
+    right_center = torso_center(right)
+    if left_center is None or right_center is None:
+        return False
+    distance = (
+        (left_center[0] - right_center[0]) ** 2
+        + (left_center[1] - right_center[1]) ** 2
+    ) ** 0.5
+    if distance >= 0.12:
+        return False
+    if image is not None and distance >= 0.05:
+        left_value = torso_brightness(image, left)
+        right_value = torso_brightness(image, right)
+        if (
+            left_value is not None
+            and right_value is not None
+            and abs(left_value - right_value) >= BRIGHTNESS_GAP
+        ):
+            return False
+    return True
+
+
 def choose_pose(
     poses: List[List[Dict[str, float]]],
     anchor_x: Optional[float] = None,
     anchor_y: Optional[float] = None,
     text: str = "",
     person: Optional[str] = None,
+    image: Optional[np.ndarray] = None,
 ) -> Optional[List[Dict[str, float]]]:
     """
     Pick the dancer the error is about.
 
-    An anchor is the chest point from the vision model. Without one, a kick
-    description selects the pose with the higher foot. If the model did not
-    mark a point, the woman is the dancer MediaPipe did not lock onto first,
-    and the man is the prominent one.
+    An anchor is the chest point from the vision model. Without one, a
+    clear clothing gap wins: the lighter chest is the woman and the darker
+    is the man. A kick then selects the higher foot, and a lunge selects
+    the wider stance. Detection order is not used: the first body is not
+    a gender. One pose in clothes that contradict the requested person is
+    left undrawn.
     """
     if not poses:
         return None
@@ -110,6 +191,16 @@ def choose_pose(
         if ranked[0][0] > 0.45:
             return None
         return ranked[0][1]
+
+    if image is not None and person in ("female", "male") and len(poses) >= 2:
+        lights = []
+        for pose in poses:
+            value = torso_brightness(image, pose)
+            if value is not None:
+                lights.append((value, pose))
+        lights.sort(key=lambda item: item[0])
+        if len(lights) >= 2 and lights[-1][0] - lights[0][0] >= BRIGHTNESS_GAP:
+            return lights[-1][1] if person == "female" else lights[0][1]
 
     if mentions_raised_leg(text):
         feet = []
@@ -133,15 +224,25 @@ def choose_pose(
         if len(poses) == 1:
             return None
 
+    if person == "female" and mentions_deep_sit(text):
+        widths = []
+        for pose in poses:
+            width = stance_width(pose)
+            if width is not None:
+                widths.append((width, pose))
+        widths.sort(key=lambda item: item[0], reverse=True)
+        if len(widths) >= 2 and widths[0][0] - widths[1][0] >= 0.06:
+            return widths[0][1]
+
     if len(poses) == 1:
+        if image is not None and person in ("female", "male"):
+            value = torso_brightness(image, poses[0])
+            if person == "female" and value is not None and value < FEMALE_DARK_LIMIT:
+                return None
+            if person == "male" and value is not None and value > MALE_LIGHT_LIMIT:
+                return None
         return poses[0]
-    # No anchor. MediaPipe's first body is the prominent dancer, which in a
-    # couple is often the partner we were not asked to critique.
-    if person == "female":
-        return poses[-1]
-    if person == "male":
-        return poses[0]
-    return poses[0]
+    return None
 
 
 def pose_distance(
@@ -226,6 +327,8 @@ class PoseService:
         """
         self.min_detection = min_detection_confidence
         self.min_tracking = min_tracking_confidence
+        self._landmarker = None
+        self._landmarker_loaded = False
 
     def extract_poses_from_video(
         self,
@@ -475,17 +578,30 @@ class PoseService:
         """
         Detect up to max_people poses.
 
-        MediaPipe's pose solution returns one body, usually the larger one.
-        Each found body is masked and the search repeats so the partner is
-        not skipped.
+        The pose solution returns one body. Each found body is masked and
+        the search repeats. A second model can see the partner the mask
+        loop folds into the first dancer. Poses whose chests lie on the
+        same clothes are kept once.
         """
         if image is None or image.size == 0:
             return []
 
         height, width = image.shape[:2]
         found: List[List[Dict[str, float]]] = []
-        blocked = np.zeros((height, width), dtype=np.uint8)
 
+        def keep(landmarks: Optional[List[Dict[str, float]]]) -> None:
+            if not landmarks or torso_center(landmarks) is None:
+                return
+            if any(same_dancer(landmarks, previous, image) for previous in found):
+                return
+            if len(found) >= max_people:
+                return
+            found.append(landmarks)
+
+        for landmarks in self._detect_landmarker(image):
+            keep(landmarks)
+
+        blocked = np.zeros((height, width), dtype=np.uint8)
         for _ in range(max_people):
             working = image.copy()
             working[blocked > 0] = (40, 40, 40)
@@ -497,14 +613,61 @@ class PoseService:
                 break
             cx = min(max(int(center[0] * width), 0), width - 1)
             cy = min(max(int(center[1] * height), 0), height - 1)
-            if blocked[cy, cx]:
+            duplicate = any(same_dancer(landmarks, previous, image) for previous in found)
+            # A painted pixel can belong to the partner in a close hold.
+            # Stop only when the same dancer is found again under the mask.
+            if blocked[cy, cx] and duplicate:
                 break
-            if any(self._same_person(landmarks, previous) for previous in found):
-                break
-            found.append(landmarks)
+            if not duplicate:
+                keep(landmarks)
             self._paint_mask(blocked, landmarks)
 
         return [self._refine_pose(image, pose) for pose in found]
+
+    def _detect_landmarker(self, image: np.ndarray) -> List[List[Dict[str, float]]]:
+        """Up to two poses from the task model. Empty when the file is absent."""
+        landmarker = self._pose_landmarker()
+        if landmarker is None:
+            return []
+        rgb = np.ascontiguousarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+        try:
+            result = landmarker.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb))
+        except Exception:
+            return []
+        poses = []
+        for people in result.pose_landmarks or []:
+            poses.append([
+                {
+                    "x": float(landmark.x),
+                    "y": float(landmark.y),
+                    "z": float(landmark.z),
+                    "visibility": float(landmark.visibility or 1.0),
+                }
+                for landmark in people
+            ])
+        return poses
+
+    def _pose_landmarker(self):
+        """Load the multi-person model once. None when the file is missing."""
+        if self._landmarker_loaded:
+            return self._landmarker
+        self._landmarker_loaded = True
+        if not LANDMARKER_PATH.is_file():
+            return None
+        try:
+            from mediapipe.tasks import python as mp_tasks
+            from mediapipe.tasks.python import vision
+
+            options = vision.PoseLandmarkerOptions(
+                base_options=mp_tasks.BaseOptions(model_asset_path=str(LANDMARKER_PATH)),
+                running_mode=vision.RunningMode.IMAGE,
+                num_poses=2,
+                min_pose_detection_confidence=0.25,
+            )
+            self._landmarker = vision.PoseLandmarker.create_from_options(options)
+        except Exception:
+            self._landmarker = None
+        return self._landmarker
 
     def _refine_pose(
         self,
@@ -560,6 +723,12 @@ class PoseService:
         ) ** 0.5
         if shift > 0.18:
             return landmarks
+        # A crop of two overlapping dancers can lock onto the partner.
+        # Keep the first skeleton when the chest colour jumps.
+        before = torso_brightness(image, landmarks)
+        after = torso_brightness(image, mapped)
+        if before is not None and after is not None and abs(before - after) >= 50:
+            return landmarks
         return mapped
 
     def _same_person(
@@ -568,15 +737,7 @@ class PoseService:
         right: List[Dict[str, float]],
     ) -> bool:
         """Whether two detections are the same dancer seen again."""
-        left_center = torso_center(left)
-        right_center = torso_center(right)
-        if left_center is None or right_center is None:
-            return False
-        distance = (
-            (left_center[0] - right_center[0]) ** 2
-            + (left_center[1] - right_center[1]) ** 2
-        ) ** 0.5
-        return distance < 0.1
+        return same_dancer(left, right)
 
     def _paint_mask(self, mask: np.ndarray, landmarks: List[Dict[str, float]]) -> None:
         """Mark a dancer's torso, head and legs so the next pass skips them."""

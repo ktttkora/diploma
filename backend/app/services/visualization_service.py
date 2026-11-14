@@ -256,6 +256,7 @@ class VisualizationService:
                 error_data.get("anchor_y"),
                 note,
                 person=person or None,
+                image=user_frame,
             )
             focus = highlighted_connections(note)
 
