@@ -116,3 +116,22 @@
 - `build_reference_index.py` с несуществующей папкой выходит с exit 0
 - Синглтон `ReferenceService()` берёт `data/reference_poses` относительно CWD
 - `AUTHOR_NAMES` - ручной список преподавателей
+
+---
+
+## Сессия: 13 ноября 2026
+
+README переписан по текущему коду. Прежние записи журнала не менялись.
+
+- Запуск backend: Python 3.11, из `backend` с активным venv — `python -m uvicorn app.main:app --host 127.0.0.1 --port 8000`. Команды `python -m app.main` в README нет: в `app/main.py` нет блока `if __name__`.
+- PostgreSQL на хосте — порт 5433, Redis — 6379. Документация API: `/api/docs` и `/api/redoc`, не `/docs`.
+- В описании AI только провайдеры `claude` и `claude_cli`. По умолчанию и в текущей конфигурации — `claude_cli`. Убраны устаревшие провайдер, прокси и название модели.
+- Эталоны: 648 видео в `hasl_files`, 647 уникальных элементов, 647 JSON в `backend/data/reference_poses`. Один MOV — дубликат одноимённого mp4.
+- `backend/.env.example` нет, README больше не предлагает его копировать. Секреты и содержимое `.env` не приводятся.
+- Документы указаны в корне репозитория, не в `docs/`. Команды — PowerShell. Celery worker на Windows — с `--pool=solo`.
+- Маршруты фронтенда: `/login`, `/register`, `/upload`, `/processing/:analysisId`, `/results/:analysisId`, `/history`, `/profile`.
+- Ревьюер запросил три правки README (серый холст эталона вместо кадра видео, реальный клиент API, engines Node.js); правки внесены.
+- README: раздел «API» — живые маршруты, Swagger/ReDoc/OpenAPI, нет `/docs`, login form-urlencoded, `?token=` только у потока видео и скриншота.
+- Добавлены `USER_GUIDE.md`, `DEVELOPER_GUIDE.md`, `DIPLOMA.md`. `pytest --cov=app`: 157 passed, покрытие 65%.
+- CORS не пускал интерфейс с `http://127.0.0.1:3000`. Адрес добавлен в дефолт и в `.env`. Снимки экранов лежат в `screenshots/`. Claude CLI на этом запуске не залогинен.
+- AI по умолчанию переведён на `grok_cli`: локальный `grok` после `grok login`. Ключ `XAI_API_KEY` и свой базовый URL в процесс не передаются.
