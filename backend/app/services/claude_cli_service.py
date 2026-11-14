@@ -36,8 +36,9 @@ CLI_SYSTEM_PROMPT = (
 )
 
 # Environment variables that must not leak into the CLI child process:
-# API credentials would switch it off the subscription, and the session
-# variables of a parent Claude Code would make it act as a nested session
+# API credentials or a custom base URL would switch it off the subscription
+# (that is how the old Octava proxy was wired), and the session variables of
+# a parent Claude Code would make it act as a nested session
 STRIPPED_ENV_VARS = (
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",

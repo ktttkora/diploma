@@ -12,7 +12,6 @@ import pytest
 
 from app.config import settings
 from app.services.claude_service import ClaudeService, DEFAULT_ELEMENTS_TASK
-from app.services.glm_service import GLMService
 
 
 AI_RESPONSE = {
@@ -97,9 +96,8 @@ CATALOG = {"Американка": "Американка", "Партнерша �
            "Солнышко": "Солнышко"}
 
 
-@pytest.mark.parametrize("service_cls", [ClaudeService, GLMService])
-def test_prompt_lists_elements_and_examples(tmp_path, service_cls) -> None:
-    """Both providers get the element list and example images after user frames."""
+def test_prompt_lists_elements_and_examples(tmp_path) -> None:
+    """The prompt lists the element catalog and example images after user frames."""
     examples = [
         {"element": "Американка", "stem": "Американка", "score": 0.1,
          "frame_paths": make_frames(tmp_path, 2, "ref_a")},
@@ -107,7 +105,7 @@ def test_prompt_lists_elements_and_examples(tmp_path, service_cls) -> None:
          "frame_paths": make_frames(tmp_path, 1, "ref_b")},
     ]
     reference = FakeReference(CATALOG, examples)
-    service = service_cls(api_key="sk-test", model="test-model", reference=reference)
+    service = ClaudeService(api_key="sk-test", model="test-model", reference=reference)
     user = make_frames(tmp_path, 20)
 
     result = run(service, user, user_poses=[{"landmarks": []}])

@@ -142,10 +142,7 @@ class ClaudeService:
     def client(self) -> anthropic.Anthropic:
         """Lazily create the Anthropic client."""
         if self._client is None:
-            kwargs: Dict[str, Any] = {"api_key": self.api_key}
-            if settings.ANTHROPIC_BASE_URL:
-                kwargs["base_url"] = settings.ANTHROPIC_BASE_URL
-            self._client = anthropic.Anthropic(**kwargs)
+            self._client = anthropic.Anthropic(api_key=self.api_key)
         return self._client
 
     def _resolve_model(self) -> str:
@@ -610,12 +607,12 @@ def get_ai_service() -> ClaudeService:
     Get the AI service selected by settings.AI_PROVIDER.
 
     Returns:
-        ClaudeService, ClaudeCliService or GLMService instance
+        GrokCliService, ClaudeCliService or ClaudeService
     """
+    if settings.AI_PROVIDER == "grok_cli":
+        from app.services.grok_cli_service import get_grok_cli_service
+        return get_grok_cli_service()
     if settings.AI_PROVIDER == "claude_cli":
         from app.services.claude_cli_service import get_claude_cli_service
         return get_claude_cli_service()
-    if settings.AI_PROVIDER == "glm":
-        from app.services.glm_service import get_glm_service
-        return get_glm_service()
     return get_claude_service()

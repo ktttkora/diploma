@@ -25,24 +25,23 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
 
-    # AI provider: "claude", "claude_cli" or "glm"
-    AI_PROVIDER: str = "claude"
+    # AI provider: "grok_cli" (Grok subscription), "claude_cli", or "claude"
+    AI_PROVIDER: str = "grok_cli"
     AI_ENABLED: bool = True
 
-    # Anthropic API
+    # Official Anthropic API. A custom base URL is not supported.
     ANTHROPIC_API_KEY: str = ""
-    ANTHROPIC_BASE_URL: str = ""
     CLAUDE_MODEL: str = ""
+
+    # Local Grok CLI signed in with `grok login` (subscription, no API key)
+    GROK_CLI_PATH: str = "grok"
+    GROK_CLI_MODEL: str = ""  # Empty = subscription default model
+    GROK_CLI_TIMEOUT: int = 600
 
     # Local Claude Code CLI (claude.ai subscription, no API key)
     CLAUDE_CLI_PATH: str = "claude"
     CLAUDE_CLI_MODEL: str = ""  # Empty = subscription default model
     CLAUDE_CLI_TIMEOUT: int = 600  # Seconds before the CLI process is killed
-
-    # Z.ai GLM API (OpenAI-compatible)
-    GLM_API_KEY: str = ""
-    GLM_BASE_URL: str = "https://api.z.ai/api/paas/v4"
-    GLM_MODEL: str = "glm-4.6v-flash"
 
     # Reference examples passed to the AI for element recognition
     AI_REFERENCE_EXAMPLES: bool = True
@@ -64,7 +63,7 @@ class Settings(BaseSettings):
     TEMP_UPLOAD_TTL_HOURS: int = 24
 
     # CORS
-    CORS_ORIGINS: List[str] = ["http://localhost:3000"]
+    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -98,8 +97,8 @@ class Settings(BaseSettings):
     def validate_ai_provider(cls, v):
         """Validate AI_PROVIDER is a supported provider."""
         v = v.strip().lower()
-        if v not in ("claude", "claude_cli", "glm"):
-            raise ValueError("AI_PROVIDER must be 'claude', 'claude_cli' or 'glm'")
+        if v not in ("grok_cli", "claude", "claude_cli"):
+            raise ValueError("AI_PROVIDER must be 'grok_cli', 'claude_cli' or 'claude'")
         return v
 
 
